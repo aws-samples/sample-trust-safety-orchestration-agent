@@ -1,0 +1,15 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "trust-safety-orchestration"
+resolve_s3 = true
+s3_prefix = "trust-safety-orchestration"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=\"dev\""
+tags = "Project=\"TrustSafetyOrchestration\" Team=\"TrustAndSafety\""
+
+[default.build.parameters]
+use_container = false
+parallel = true

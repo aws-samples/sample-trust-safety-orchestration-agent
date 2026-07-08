@@ -1,0 +1,1883 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Trust & Safety Orchestration Agent — autonomous content moderation and safety enforcement system.
+  Detects, investigates, and resolves policy violations at scale.
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 256
+    Architectures:
+      - arm64
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: !If [IsProd, "INFO", "DEBUG"]
+        CASES_TABLE: !Ref CasesTable
+        EVIDENCE_METADATA_TABLE: !Ref EvidenceMetadataTable
+        AUDIT_LOGS_TABLE: !Ref AuditLogsTable
+        BLOCKLIST_TABLE: !Ref BlocklistTable
+        CONFIG_TABLE: !Ref ConfigTable
+        REVIEW_QUEUE_TABLE: !Ref ReviewQueueTable
+        METRICS_TABLE: !Ref MetricsTable
+        REVIEWER_STATE_TABLE: !Ref ReviewerStateTable
+        ANOMALY_SCORES_TABLE: !Ref AnomalyScoresTable
+        APPEALS_TABLE: !Ref AppealsTable
+        WEBSOCKET_CONNECTIONS_TABLE: !Ref WebSocketConnectionsTable
+        EVIDENCE_BUCKET: !Ref EvidenceStoreBucket
+        AUDIT_ARCHIVE_BUCKET: !Ref AuditArchiveBucket
+        CONFIG_BACKUPS_BUCKET: !Ref ConfigBackupsBucket
+        REDIS_ENDPOINT: !If [EnableRedis, !GetAtt RedisCluster.RedisEndpoint.Address, ""]
+        REDIS_PORT: !If [EnableRedis, !GetAtt RedisCluster.RedisEndpoint.Port, ""]
+        USE_REDIS: !Ref UseRedis
+        NOTIFICATION_QUEUE_URL: !Ref NotificationQueue
+        BEHAVIORAL_STREAM_NAME: !Ref BehavioralEventsStream
+        WEBSOCKET_API_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  PlatformUserApiUrl:
+    Type: String
+    Default: https://internal-api.example.com/users
+
+  PlatformMessagingApiUrl:
+    Type: String
+    Default: https://internal-api.example.com/messages
+
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-sonnet-20240229-v1:0
+
+  PartnerIntelApiUrl:
+    Type: String
+    Default: https://intel-api.partner-network.internal
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.0.2.0/24
+
+  RedisNodeType:
+    Type: String
+    Default: cache.t3.medium
+
+  UseRedis:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Set to false for dev/demo (skips VPC, Redis — uses DynamoDB for rate limiting)"
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  EnableRedis: !Equals [!Ref UseRedis, "true"]
+
+# =============================================================================
+# REST API Gateway
+# =============================================================================
+Resources:
+
+  SafetyAgentApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "safetyagent-api-${Environment}"
+      StageName: !Ref Environment
+      TracingEnabled: true
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt CognitoUserPool.Arn
+        AddDefaultAuthorizerToCorsPreflight: false
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key'"
+        AllowOrigin: "'*'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+      Models:
+        AnomalyAnalyzeRequest:
+          type: object
+          required: [user_ids]
+          properties:
+            user_ids:
+              type: array
+              items:
+                type: string
+        EnforcementExecuteRequest:
+          type: object
+          required: [case_id, action, violation_type, confidence_score]
+          properties:
+            case_id:
+              type: string
+            action:
+              type: string
+            violation_type:
+              type: string
+            confidence_score:
+              type: number
+        BulkEnforcementRequest:
+          type: object
+          required: [case_id, user_ids, action, violation_type]
+          properties:
+            case_id:
+              type: string
+            user_ids:
+              type: array
+              items:
+                type: string
+              maxItems: 500
+            action:
+              type: string
+            violation_type:
+              type: string
+        AppealRequest:
+          type: object
+          required: [enforcement_id, appeal_reason]
+          properties:
+            enforcement_id:
+              type: string
+            appeal_reason:
+              type: string
+            supporting_info:
+              type: string
+        CrisisResourcesRequest:
+          type: object
+          required: [user_id, crisis_type, case_id]
+          properties:
+            user_id:
+              type: string
+            crisis_type:
+              type: string
+            case_id:
+              type: string
+
+# =============================================================================
+# WebSocket API Gateway
+# =============================================================================
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "safetyagent-ws-${Environment}"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  WebSocketConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$connect"
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WebSocketConnectIntegration}"
+
+  WebSocketDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$disconnect"
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WebSocketDisconnectIntegration}"
+
+  WebSocketDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: "$default"
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WebSocketDefaultIntegration}"
+
+  WebSocketConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketHandlerFunction.Arn}/invocations"
+
+  WebSocketDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketHandlerFunction.Arn}/invocations"
+
+  WebSocketDefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketHandlerFunction.Arn}/invocations"
+
+  WebSocketHandlerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketHandlerFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+# =============================================================================
+# Cognito User Pool
+# =============================================================================
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "safetyagent-users-${Environment}"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: "OPTIONAL"
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      Schema:
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MaxLength: "50"
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "safetyagent-client-${Environment}"
+      UserPoolId: !Ref CognitoUserPool
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+
+# =============================================================================
+# VPC & Networking
+# =============================================================================
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Condition: EnableRedis
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "safetyagent-vpc-${Environment}"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: EnableRedis
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "safetyagent-private-1-${Environment}"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: EnableRedis
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "safetyagent-private-2-${Environment}"
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Condition: EnableRedis
+    Properties:
+      Description: Subnet group for Redis
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: EnableRedis
+    Properties:
+      GroupDescription: Security group for Redis
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: EnableRedis
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref VPC
+
+  DynamoDBVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: EnableRedis
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: EnableRedis
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: EnableRedis
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: EnableRedis
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: EnableRedis
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+# =============================================================================
+# ElastiCache Redis (only when UseRedis=true)
+# =============================================================================
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Condition: EnableRedis
+    Properties:
+      ClusterName: !Sub "safetyagent-redis-${Environment}"
+      Engine: redis
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      EngineVersion: "7.0"
+
+# =============================================================================
+# DynamoDB Tables — Core Operational Data
+# =============================================================================
+
+  CasesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-cases-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: case_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: case_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: user_id-status-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: status-created_at-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  EvidenceMetadataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-evidence-metadata-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: case_id
+          AttributeType: S
+        - AttributeName: evidence_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: case_id
+          KeyType: HASH
+        - AttributeName: evidence_type
+          KeyType: RANGE
+
+  AuditLogsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-audit-logs-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: audit_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+        - AttributeName: case_id
+          AttributeType: S
+        - AttributeName: event_type
+          AttributeType: S
+        - AttributeName: jurisdiction_code
+          AttributeType: S
+      KeySchema:
+        - AttributeName: audit_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: case_id-timestamp-index
+          KeySchema:
+            - AttributeName: case_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: event_type-timestamp-index
+          KeySchema:
+            - AttributeName: event_type
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: jurisdiction-timestamp-index
+          KeySchema:
+            - AttributeName: jurisdiction_code
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  BlocklistTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-blocklist-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: hash_type
+          AttributeType: S
+        - AttributeName: hash_value
+          AttributeType: S
+      KeySchema:
+        - AttributeName: hash_type
+          KeyType: HASH
+        - AttributeName: hash_value
+          KeyType: RANGE
+
+  ConfigTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-config-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: config_key
+          AttributeType: S
+        - AttributeName: version_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: config_key
+          KeyType: HASH
+        - AttributeName: version_id
+          KeyType: RANGE
+
+# =============================================================================
+# DynamoDB Tables — Queue & Metrics Data
+# =============================================================================
+
+  ReviewQueueTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "tg-review-queue-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: queue_id
+          AttributeType: S
+        - AttributeName: priority
+          AttributeType: S
+        - AttributeName: added_at
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: queue_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: priority-added_at-index
+          KeySchema:
+            - AttributeName: priority
+              KeyType: HASH
+            - AttributeName: added_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: status-priority-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: priority
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  MetricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "tg-metrics-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: metric_name
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: metric_name
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+  ReviewerStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "tg-reviewer-state-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: reviewer_id
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: reviewer_id
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
+  AnomalyScoresTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "tg-anomaly-scores-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  AppealsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "tg-appeals-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: appeal_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: appeal_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: user_id-status-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "tg-websocket-connections-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+
+# =============================================================================
+# S3 Buckets
+# =============================================================================
+
+  EvidenceStoreBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "tg-evidence-store-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  AuditArchiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "tg-audit-archive-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 365
+            ExpirationInDays: 2920
+
+  ConfigBackupsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tg-config-backups-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "tg-frontend-${Environment}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+
+# =============================================================================
+# CloudFront Distribution
+# =============================================================================
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "tg-frontend-oac-${Environment}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "SafetyAgent Dashboard - ${Environment}"
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3FrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: ApiGatewayOrigin
+            DomainName: !Sub "${SafetyAgentApi}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: !Sub "/${Environment}"
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: S3FrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiGatewayOrigin
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+
+# =============================================================================
+# Kinesis Stream
+# =============================================================================
+
+  BehavioralEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub "tg-behavioral-events-${Environment}"
+      ShardCount: !If [IsProd, 4, 1]
+      RetentionPeriodHours: 24
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+
+# =============================================================================
+# SQS Queues
+# =============================================================================
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "tg-notifications-${Environment}"
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDLQ.Arn
+        maxReceiveCount: 3
+      KmsMasterKeyId: alias/aws/sqs
+
+  NotificationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "tg-notifications-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: alias/aws/sqs
+
+  InvestigationTriggerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "tg-investigation-trigger-${Environment}"
+      VisibilityTimeout: 120
+      KmsMasterKeyId: alias/aws/sqs
+
+# =============================================================================
+# SNS Topics (Alerting)
+# =============================================================================
+
+  OperationsAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "tg-ops-alerts-${Environment}"
+      KmsMasterKeyId: alias/aws/sns
+
+  CriticalAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "tg-critical-alerts-${Environment}"
+      KmsMasterKeyId: alias/aws/sns
+
+# =============================================================================
+# EventBridge Rules
+# =============================================================================
+
+  ProfileCreationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "tg-profile-creation-${Environment}"
+      EventPattern:
+        source:
+          - "safety.platform"
+        detail-type:
+          - "ProfileCreated"
+      Targets:
+        - Arn: !GetAtt ProfileProcessorFunction.Arn
+          Id: ProfileProcessor
+
+  BulkDetectionSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "tg-bulk-detection-schedule-${Environment}"
+      ScheduleExpression: "rate(1 minute)"
+      Targets:
+        - Arn: !GetAtt BulkDetectorFunction.Arn
+          Id: BulkDetector
+
+  DashboardMetricsSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "tg-dashboard-metrics-${Environment}"
+      ScheduleExpression: "rate(1 minute)"
+      Targets:
+        - Arn: !GetAtt WebSocketHandlerFunction.Arn
+          Id: MetricsBroadcast
+          Input: '{"action": "broadcast_metrics"}'
+
+  StaleQueueCheckSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "tg-stale-queue-check-${Environment}"
+      ScheduleExpression: "rate(15 minutes)"
+      Targets:
+        - Arn: !GetAtt ReviewHandlerFunction.Arn
+          Id: StaleQueueCheck
+          Input: '{"action": "check_stale_cases"}'
+
+  ProfileCreationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ProfileProcessorFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ProfileCreationRule.Arn
+
+  BulkDetectionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BulkDetectorFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BulkDetectionSchedule.Arn
+
+  DashboardMetricsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketHandlerFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DashboardMetricsSchedule.Arn
+
+  StaleQueueCheckPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ReviewHandlerFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StaleQueueCheckSchedule.Arn
+
+# =============================================================================
+# Step Functions — Investigation Workflow
+# =============================================================================
+
+  InvestigationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "tg-investigation-workflow-${Environment}"
+      DefinitionUri: statemachines/investigation_workflow.asl.json
+      DefinitionSubstitutions:
+        EvidenceAssemblerArn: !GetAtt EvidenceAssemblerFunction.Arn
+        ConfidenceCalculatorArn: !GetAtt ConfidenceCalculatorFunction.Arn
+        PolicyRouterArn: !GetAtt PolicyRouterFunction.Arn
+        EnforcementExecutorArn: !GetAtt EnforcementExecutorFunction.Arn
+        EscalationHandlerArn: !GetAtt EscalationHandlerFunction.Arn
+        CrisisHandlerArn: !GetAtt CrisisHandlerFunction.Arn
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EvidenceAssemblerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ConfidenceCalculatorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PolicyRouterFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EnforcementExecutorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EscalationHandlerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CrisisHandlerFunction
+
+  BulkActionStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "tg-bulk-action-workflow-${Environment}"
+      DefinitionUri: statemachines/bulk_action_workflow.asl.json
+      DefinitionSubstitutions:
+        BulkEnforcementArn: !GetAtt EnforcementHandlerFunction.Arn
+        EscalationHandlerArn: !GetAtt EscalationHandlerFunction.Arn
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EnforcementHandlerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref EscalationHandlerFunction
+
+# =============================================================================
+# IAM Roles
+# =============================================================================
+
+  SafetyAgentBasePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "tg-base-policy-${Environment}"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+          - Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DeleteNetworkInterface
+            Resource: "*"
+
+# =============================================================================
+# Lambda Functions — API Handlers
+# =============================================================================
+
+  AnomalyHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-anomaly-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.anomaly_handler.lambda_handler
+      Timeout: 10
+      MemorySize: 512
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AnomalyScoresTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+      Events:
+        AnalyzeAnomaly:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/anomalies/analyze
+            Method: POST
+
+  CaseHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-case-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.case_handler.lambda_handler
+      Timeout: 15
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref EvidenceMetadataTable
+        - S3ReadPolicy:
+            BucketName: !Ref EvidenceStoreBucket
+      Events:
+        GetEvidence:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/cases/{caseId}/evidence
+            Method: GET
+        GetActiveCases:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/cases/active
+            Method: GET
+
+  EnforcementHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-enforcement-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.enforcement_handler.lambda_handler
+      Timeout: 30
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlocklistTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AppealsTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+      Events:
+        ExecuteEnforcement:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/enforcement/execute
+            Method: POST
+        BulkEnforcement:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/enforcement/bulk
+            Method: POST
+
+  ConfigHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-config-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.config_handler.lambda_handler
+      Timeout: 10
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConfigTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - S3CrudPolicy:
+            BucketName: !Ref ConfigBackupsBucket
+      Events:
+        UpdateThresholds:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/config/thresholds
+            Method: PUT
+        GetConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/config/current
+            Method: GET
+        RollbackConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/config/rollback
+            Method: POST
+
+  ReviewHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-review-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.review_handler.lambda_handler
+      Timeout: 15
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewQueueTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - S3ReadPolicy:
+            BucketName: !Ref EvidenceStoreBucket
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+      Events:
+        GetReviewQueue:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/review-queue
+            Method: GET
+        SubmitDecision:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/cases/{caseId}/decision
+            Method: POST
+
+  IntelligenceHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-intelligence-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.intelligence_handler.lambda_handler
+      Timeout: 15
+      Environment:
+        Variables:
+          PARTNER_NETWORK_INTEL_API_URL: !Ref PartnerIntelApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlocklistTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+      Events:
+        IngestIntelligence:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/intelligence/ingest
+            Method: POST
+        PublishIntelligence:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/intelligence/publish
+            Method: POST
+
+  MetricsHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-metrics-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.metrics_handler.lambda_handler
+      Timeout: 10
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref MetricsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ReviewQueueTable
+      Events:
+        RealtimeMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/metrics/realtime
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        PrometheusMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/metrics
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        RecentActions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/actions/recent
+            Method: GET
+
+  AuthHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-auth-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.auth_handler.lambda_handler
+      Timeout: 10
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref CognitoUserPool
+          CLIENT_ID: !Ref CognitoUserPoolClient
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminInitiateAuth
+                - cognito-idp:AdminGetUser
+              Resource: !GetAtt CognitoUserPool.Arn
+      Events:
+        Login:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/auth/login
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  HealthHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-health-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.health_handler.lambda_handler
+      Timeout: 10
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+      Events:
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+  AppealHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-appeal-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.appeal_handler.lambda_handler
+      Timeout: 10
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AppealsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewQueueTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+      Events:
+        SubmitAppeal:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/appeals
+            Method: POST
+
+  CrisisHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-crisis-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.crisis_handler.lambda_handler
+      Timeout: 15
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewQueueTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+      Events:
+        SendCrisisResources:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/crisis/resources
+            Method: POST
+
+  AuditHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-audit-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.audit_handler.lambda_handler
+      Timeout: 30
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref MetricsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+        - S3CrudPolicy:
+            BucketName: !Ref AuditArchiveBucket
+      Events:
+        ExportAudit:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/audit/export
+            Method: GET
+        ComplianceReport:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/reports/compliance
+            Method: GET
+
+  ReviewerHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-reviewer-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.reviewer_handler.lambda_handler
+      Timeout: 10
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref ReviewerStateTable
+      Events:
+        ExposureMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SafetyAgentApi
+            Path: /api/v1/reviewers/{reviewerId}/exposure-metrics
+            Method: GET
+
+  WebSocketHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-websocket-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.websocket_handler.lambda_handler
+      Timeout: 10
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref MetricsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+# =============================================================================
+# Lambda Functions — Event Processors
+# =============================================================================
+
+  BehavioralProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-behavioral-processor-${Environment}"
+      CodeUri: lambdas/
+      Handler: processors.behavioral_processor.lambda_handler
+      Timeout: 60
+      MemorySize: 512
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AnomalyScoresTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+        - KinesisStreamReadPolicy:
+            StreamName: !Ref BehavioralEventsStream
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt InvestigationStateMachine.Name
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt OperationsAlertTopic.TopicName
+      Events:
+        BehavioralStream:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt BehavioralEventsStream.Arn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            BisectBatchOnFunctionError: true
+            MaximumRetryAttempts: 3
+
+  ProfileProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-profile-processor-${Environment}"
+      CodeUri: lambdas/
+      Handler: processors.profile_processor.lambda_handler
+      Timeout: 15
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref BlocklistTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+
+  BulkDetectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-bulk-detector-${Environment}"
+      CodeUri: lambdas/
+      Handler: processors.bulk_detector.lambda_handler
+      Timeout: 60
+      MemorySize: 512
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref MetricsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt BulkActionStateMachine.Name
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt OperationsAlertTopic.TopicName
+
+  NotificationProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-notification-processor-${Environment}"
+      CodeUri: lambdas/
+      Handler: processors.notification_processor.lambda_handler
+      Timeout: 30
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Events:
+        NotificationQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt NotificationQueue.Arn
+            BatchSize: 10
+
+# =============================================================================
+# Lambda Functions — Step Function Tasks
+# =============================================================================
+
+  EvidenceAssemblerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-evidence-assembler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.evidence_assembler.lambda_handler
+      Timeout: 60
+      MemorySize: 512
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+          PLATFORM_MESSAGING_API_URL: !Ref PlatformMessagingApiUrl
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EvidenceMetadataTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref BlocklistTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref CasesTable
+        - S3CrudPolicy:
+            BucketName: !Ref EvidenceStoreBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/*"
+
+  ConfidenceCalculatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-confidence-calculator-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.confidence_calculator.lambda_handler
+      Timeout: 10
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+
+  PolicyRouterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-policy-router-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.policy_router.lambda_handler
+      Timeout: 10
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+
+  EnforcementExecutorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-enforcement-executor-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.enforcement_executor.lambda_handler
+      Timeout: 30
+      VpcConfig: !If
+        - EnableRedis
+        - SecurityGroupIds: [!Ref LambdaSecurityGroup]
+          SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+        - !Ref "AWS::NoValue"
+      Environment:
+        Variables:
+          PLATFORM_USER_API_URL: !Ref PlatformUserApiUrl
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlocklistTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AppealsTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt NotificationQueue.QueueName
+
+  EscalationHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "tg-escalation-handler-${Environment}"
+      CodeUri: lambdas/
+      Handler: handlers.escalation_handler.lambda_handler
+      Timeout: 15
+      Policies:
+        - !Ref SafetyAgentBasePolicy
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReviewQueueTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+
+# =============================================================================
+# CloudWatch Alarms
+# =============================================================================
+
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "tg-high-error-rate-${Environment}"
+      AlarmDescription: Error rate exceeds 5% across SafetyAgent functions
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BehavioralProcessorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref CriticalAlertTopic
+
+  InvestigationDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "tg-investigation-duration-${Environment}"
+      AlarmDescription: Investigation workflow exceeding 15 minute SLA
+      Namespace: AWS/States
+      MetricName: ExecutionTime
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref InvestigationStateMachine
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 900000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsAlertTopic
+
+  ReviewQueueDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "tg-review-queue-depth-${Environment}"
+      AlarmDescription: Review queue depth exceeds 1000
+      Namespace: SafetyAgent
+      MetricName: ReviewQueueDepth
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsAlertTopic
+
+  EnforcementQueueDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "tg-enforcement-queue-depth-${Environment}"
+      AlarmDescription: Enforcement queue exceeds 1000 pending actions
+      Namespace: SafetyAgent
+      MetricName: EnforcementQueueDepth
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OperationsAlertTopic
+
+# =============================================================================
+# Outputs
+# =============================================================================
+
+Outputs:
+  RestApiUrl:
+    Description: SafetyAgent REST API URL
+    Value: !Sub "https://${SafetyAgentApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+
+  WebSocketUrl:
+    Description: SafetyAgent WebSocket URL
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+
+  CognitoClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref CognitoUserPoolClient
+
+  InvestigationStateMachineArn:
+    Description: Investigation workflow state machine ARN
+    Value: !Ref InvestigationStateMachine
+
+  BulkActionStateMachineArn:
+    Description: Bulk action workflow state machine ARN
+    Value: !Ref BulkActionStateMachine
+
+  EvidenceBucketName:
+    Description: Evidence store S3 bucket
+    Value: !Ref EvidenceStoreBucket
+
+  AuditBucketName:
+    Description: Audit archive S3 bucket
+    Value: !Ref AuditArchiveBucket
+
+  CloudFrontDomainName:
+    Description: CloudFront distribution domain name
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref CloudFrontDistribution
+
+  FrontendBucketName:
+    Description: Frontend hosting S3 bucket
+    Value: !Ref FrontendBucket
