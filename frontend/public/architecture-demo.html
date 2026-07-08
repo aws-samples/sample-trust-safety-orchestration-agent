@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafetyAgent Architecture — Interactive Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f8f9fc;
+  color: #1f2937;
+  overflow-x: hidden;
+}
+
+.header {
+  text-align: center;
+  padding: 32px 24px 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #f0e6ff 100%);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #a855f7, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+
+.header p {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.15);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+
+.btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  background: rgba(168, 85, 247, 0.06);
+  color: #7c3aed;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn:hover { background: rgba(168, 85, 247, 0.15); transform: translateY(-1px); }
+.btn.active { background: rgba(168, 85, 247, 0.2); border-color: #a855f7; }
+.btn.play { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.4); color: #059669; }
+.btn.play:hover { background: rgba(16, 185, 129, 0.2); }
+.btn.play.playing { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); color: #dc2626; }
+
+.canvas-container {
+  position: relative;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  min-height: 700px;
+}
+
+svg.diagram {
+  width: 100%;
+  height: 680px;
+  overflow: visible;
+}
+
+.node {
+  cursor: pointer;
+  transition: transform 0.2s, filter 0.2s;
+}
+
+.node:hover { transform: scale(1.05); filter: drop-shadow(0 0 12px rgba(168, 85, 247, 0.5)); }
+
+.node-box {
+  rx: 10;
+  ry: 10;
+  stroke-width: 2;
+  transition: stroke 0.3s, fill 0.3s;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.06));
+}
+
+.node-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #1f2937;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.node-sublabel {
+  font-size: 9px;
+  fill: #6b7280;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.node-icon {
+  font-size: 18px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.edge {
+  stroke-width: 2;
+  fill: none;
+  opacity: 0.4;
+  transition: opacity 0.4s, stroke-width 0.3s;
+}
+
+.edge.active {
+  opacity: 1;
+  stroke-width: 3;
+}
+
+.data-particle {
+  r: 4;
+  opacity: 0;
+}
+
+.data-particle.moving {
+  opacity: 1;
+  transition: opacity 0.3s;
+}
+
+.phase-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  fill: rgba(124, 58, 237, 0.7);
+}
+
+.agent-badge {
+  font-size: 8px;
+  font-weight: 700;
+  fill: #fbbf24;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.legend {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.info-panel {
+  position: fixed;
+  top: 50%;
+  right: 24px;
+  transform: translateY(-50%);
+  width: 340px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 12px;
+  padding: 24px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s, transform 0.3s;
+  z-index: 50;
+}
+
+.info-panel.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+.info-panel h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: #7c3aed;
+}
+
+.info-panel .service-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(124, 58, 237, 0.08);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  color: #7c3aed;
+  margin-bottom: 12px;
+}
+
+.info-panel .agent-tag {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(217, 119, 6, 0.3);
+  color: #b45309;
+  margin-left: 6px;
+}
+
+.info-panel p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #374151;
+  margin-bottom: 12px;
+}
+
+.info-panel .why {
+  font-size: 12px;
+  color: #6b7280;
+  border-left: 3px solid rgba(124, 58, 237, 0.3);
+  padding-left: 12px;
+  margin-top: 12px;
+}
+
+.info-panel .close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: rgba(0,0,0,0.05);
+  color: #6b7280;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 24px;
+  text-align: center;
+}
+
+.narration-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.95);
+  border-top: 1px solid rgba(168, 85, 247, 0.15);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.05);
+  z-index: 100;
+  transform: translateY(100%);
+  transition: transform 0.3s;
+}
+
+.narration-bar.visible { transform: translateY(0); }
+
+.narration-text {
+  flex: 1;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.5;
+}
+
+.narration-step {
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.progress-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(168, 85, 247, 0.2);
+  transition: background 0.3s;
+}
+
+.progress-dot.active { background: #7c3aed; }
+.progress-dot.done { background: #059669; }
+
+@keyframes glowPulse {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.6)) drop-shadow(0 0 20px rgba(251, 191, 36, 0.3)); transform: scale(1.05); }
+  50% { filter: drop-shadow(0 0 16px rgba(251, 191, 36, 0.9)) drop-shadow(0 0 40px rgba(251, 191, 36, 0.5)); transform: scale(1.08); }
+}
+
+.node.highlighted {
+  animation: glowPulse 1.8s ease-in-out infinite;
+  z-index: 10;
+}
+
+.node.highlighted .node-box {
+  stroke: #fbbf24 !important;
+  stroke-width: 3 !important;
+  fill: rgba(251, 191, 36, 0.12) !important;
+}
+
+.node.dimmed {
+  opacity: 0.2;
+  transition: opacity 0.4s;
+}
+
+@keyframes flowDash {
+  to { stroke-dashoffset: -20; }
+}
+.edge.flowing {
+  stroke-dasharray: 8 4;
+  animation: flowDash 1s linear infinite;
+  opacity: 0.8;
+}
+
+@media (max-width: 900px) {
+  .info-panel { position: fixed; top: auto; bottom: 80px; right: 12px; left: 12px; width: auto; transform: none; }
+  .info-panel.visible { transform: none; }
+}
+</style>
+</head>
+<body>
+<script src="/narration/bgm-engine.js"></script>
+
+<div class="header">
+  <h1>SafetyAgent Architecture</h1>
+  <p>Autonomous Trust & Safety System for the app — millions of users with high autonomous resolution rates</p>
+</div>
+
+<div class="controls">
+  <button class="btn play" id="playBtn" onclick="toggleNarration()">&#9654; Play Narration</button>
+  <button class="btn" id="bgmBtn" onclick="toggleBGMVolume()" title="Background music volume">&#9835; BGM: Med</button>
+  <button class="btn" onclick="highlightPhase('detection')">Detection</button>
+  <button class="btn" onclick="highlightPhase('investigation')">Investigation</button>
+  <button class="btn" onclick="highlightPhase('decision')">Decision</button>
+  <button class="btn" onclick="highlightPhase('enforcement')">Enforcement</button>
+  <button class="btn" onclick="highlightPhase('all')">Show All</button>
+</div>
+
+<div class="canvas-container">
+  <svg class="diagram" viewBox="0 0 1200 680">
+    <defs>
+      <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="rgba(168,85,247,0.6)"/>
+      </marker>
+      <marker id="arrowhead-active" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#a855f7"/>
+      </marker>
+      <linearGradient id="agentGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:0.3"/>
+        <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:0.1"/>
+      </linearGradient>
+    </defs>
+
+    <!-- Phase labels -->
+    <text class="phase-label" x="120" y="30">Detection</text>
+    <text class="phase-label" x="420" y="30">Investigation</text>
+    <text class="phase-label" x="760" y="30">Decision</text>
+    <text class="phase-label" x="1040" y="30">Enforcement</text>
+
+    <!-- Phase separator lines -->
+    <line x1="320" y1="40" x2="320" y2="660" stroke="rgba(168,85,247,0.15)" stroke-dasharray="4 4"/>
+    <line x1="660" y1="40" x2="660" y2="660" stroke="rgba(168,85,247,0.15)" stroke-dasharray="4 4"/>
+    <line x1="940" y1="40" x2="940" y2="660" stroke="rgba(168,85,247,0.15)" stroke-dasharray="4 4"/>
+
+    <!-- ===== DETECTION PHASE ===== -->
+
+    <!-- Kinesis Stream -->
+    <g class="node" data-id="kinesis" data-phase="detection" onclick="showInfo('kinesis')">
+      <rect class="node-box" x="40" y="80" width="140" height="60" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.5)"/>
+      <text class="node-icon" x="110" y="105">&#x1F4E1;</text>
+      <text class="node-label" x="110" y="125">Kinesis Data Stream</text>
+      <text class="node-sublabel" x="110" y="137">behavioral-events</text>
+    </g>
+
+    <!-- Behavioral Processor -->
+    <g class="node" data-id="behavioral-processor" data-phase="detection" onclick="showInfo('behavioral-processor')">
+      <rect class="node-box" x="40" y="180" width="140" height="60" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="110" y="205">&#x1F916;</text>
+      <text class="node-label" x="110" y="223">Behavioral Processor</text>
+      <text class="agent-badge" x="110" y="235">AGENT</text>
+    </g>
+
+    <!-- EventBridge -->
+    <g class="node" data-id="eventbridge" data-phase="detection" onclick="showInfo('eventbridge')">
+      <rect class="node-box" x="40" y="290" width="140" height="60" fill="rgba(236,72,153,0.1)" stroke="rgba(236,72,153,0.5)"/>
+      <text class="node-icon" x="110" y="315">&#x26A1;</text>
+      <text class="node-label" x="110" y="335">EventBridge</text>
+      <text class="node-sublabel" x="110" y="347">Profile Events</text>
+    </g>
+
+    <!-- Profile Processor -->
+    <g class="node" data-id="profile-processor" data-phase="detection" onclick="showInfo('profile-processor')">
+      <rect class="node-box" x="40" y="390" width="140" height="60" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="110" y="415">&#x1F916;</text>
+      <text class="node-label" x="110" y="433">Profile Processor</text>
+      <text class="agent-badge" x="110" y="445">AGENT</text>
+    </g>
+
+    <!-- Anomaly Detection (SageMaker) -->
+    <g class="node" data-id="sagemaker" data-phase="detection" onclick="showInfo('sagemaker')">
+      <rect class="node-box" x="220" y="180" width="140" height="60" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.5)"/>
+      <text class="node-icon" x="290" y="205">&#x1F9E0;</text>
+      <text class="node-label" x="290" y="223">SageMaker</text>
+      <text class="node-sublabel" x="290" y="235">Anomaly Scoring</text>
+    </g>
+
+    <!-- Cross-Platform Intel -->
+    <g class="node" data-id="intel" data-phase="detection" onclick="showInfo('intel')">
+      <rect class="node-box" x="220" y="390" width="140" height="60" fill="rgba(139,92,246,0.1)" stroke="rgba(139,92,246,0.5)"/>
+      <text class="node-icon" x="290" y="415">&#x1F310;</text>
+      <text class="node-label" x="290" y="433">Partner Network Intel</text>
+      <text class="node-sublabel" x="290" y="445">mTLS Blocklist</text>
+    </g>
+
+    <!-- ===== INVESTIGATION PHASE ===== -->
+
+    <!-- Step Functions -->
+    <g class="node" data-id="stepfunctions" data-phase="investigation" onclick="showInfo('stepfunctions')">
+      <rect class="node-box" x="400" y="120" width="160" height="70" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="480" y="148">&#x2699;&#xFE0F;</text>
+      <text class="node-label" x="480" y="168">Step Functions</text>
+      <text class="node-sublabel" x="480" y="180">Investigation Workflow</text>
+      <text class="agent-badge" x="480" y="185">ORCHESTRATOR</text>
+    </g>
+
+    <!-- Evidence Assembler -->
+    <g class="node" data-id="evidence" data-phase="investigation" onclick="showInfo('evidence')">
+      <rect class="node-box" x="380" y="240" width="130" height="55" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="445" y="262">&#x1F50D;</text>
+      <text class="node-label" x="445" y="280">Evidence Assembler</text>
+      <text class="agent-badge" x="445" y="292">AGENT</text>
+    </g>
+
+    <!-- Content Analysis (Bedrock) -->
+    <g class="node" data-id="bedrock" data-phase="investigation" onclick="showInfo('bedrock')">
+      <rect class="node-box" x="540" y="240" width="130" height="55" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="605" y="262">&#x1F916;</text>
+      <text class="node-label" x="605" y="280">Bedrock (Claude)</text>
+      <text class="agent-badge" x="605" y="292">AI AGENT</text>
+    </g>
+
+    <!-- Confidence Calculator -->
+    <g class="node" data-id="confidence" data-phase="investigation" onclick="showInfo('confidence')">
+      <rect class="node-box" x="420" y="340" width="150" height="55" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="495" y="362">&#x1F4CA;</text>
+      <text class="node-label" x="495" y="380">Confidence Calculator</text>
+      <text class="agent-badge" x="495" y="392">AGENT</text>
+    </g>
+
+    <!-- DynamoDB -->
+    <g class="node" data-id="dynamodb" data-phase="investigation" onclick="showInfo('dynamodb')">
+      <rect class="node-box" x="420" y="450" width="150" height="55" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.5)"/>
+      <text class="node-icon" x="495" y="472">&#x1F4BE;</text>
+      <text class="node-label" x="495" y="490">DynamoDB</text>
+      <text class="node-sublabel" x="495" y="502">10 Tables (tg-*)</text>
+    </g>
+
+    <!-- S3 -->
+    <g class="node" data-id="s3" data-phase="investigation" onclick="showInfo('s3')">
+      <rect class="node-box" x="420" y="540" width="150" height="55" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.5)"/>
+      <text class="node-icon" x="495" y="562">&#x1F4E6;</text>
+      <text class="node-label" x="495" y="580">S3</text>
+      <text class="node-sublabel" x="495" y="592">Evidence + Audit</text>
+    </g>
+
+    <!-- Redis -->
+    <g class="node" data-id="redis" data-phase="investigation" onclick="showInfo('redis')">
+      <rect class="node-box" x="600" y="450" width="120" height="55" fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.5)"/>
+      <text class="node-icon" x="660" y="472">&#x26A1;</text>
+      <text class="node-label" x="660" y="490">ElastiCache Redis</text>
+      <text class="node-sublabel" x="660" y="502">Hot Cache</text>
+    </g>
+
+    <!-- ===== DECISION PHASE ===== -->
+
+    <!-- Policy Engine -->
+    <g class="node" data-id="policy" data-phase="decision" onclick="showInfo('policy')">
+      <rect class="node-box" x="720" y="120" width="150" height="65" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="795" y="148">&#x2696;&#xFE0F;</text>
+      <text class="node-label" x="795" y="167">Policy Engine</text>
+      <text class="agent-badge" x="795" y="180">DECISION AGENT</text>
+    </g>
+
+    <!-- Crisis Response -->
+    <g class="node" data-id="crisis" data-phase="decision" onclick="showInfo('crisis')">
+      <rect class="node-box" x="720" y="240" width="150" height="55" fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.5)"/>
+      <text class="node-icon" x="795" y="262">&#x1F6A8;</text>
+      <text class="node-label" x="795" y="280">Crisis Response</text>
+      <text class="node-sublabel" x="795" y="292">Always Escalates</text>
+    </g>
+
+    <!-- Human Review Queue -->
+    <g class="node" data-id="review" data-phase="decision" onclick="showInfo('review')">
+      <rect class="node-box" x="720" y="340" width="150" height="55" fill="rgba(139,92,246,0.1)" stroke="rgba(139,92,246,0.5)"/>
+      <text class="node-icon" x="795" y="362">&#x1F464;</text>
+      <text class="node-label" x="795" y="380">Human Review Queue</text>
+      <text class="node-sublabel" x="795" y="392">Escalation Path</text>
+    </g>
+
+    <!-- Wellbeing Monitor -->
+    <g class="node" data-id="wellbeing" data-phase="decision" onclick="showInfo('wellbeing')">
+      <rect class="node-box" x="720" y="440" width="150" height="55" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.5)"/>
+      <text class="node-icon" x="795" y="462">&#x1F49A;</text>
+      <text class="node-label" x="795" y="480">Wellbeing Monitor</text>
+      <text class="node-sublabel" x="795" y="492">Reviewer Exposure</text>
+    </g>
+
+    <!-- ===== ENFORCEMENT PHASE ===== -->
+
+    <!-- Enforcement Engine -->
+    <g class="node" data-id="enforcement" data-phase="enforcement" onclick="showInfo('enforcement')">
+      <rect class="node-box" x="970" y="120" width="160" height="65" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.5)"/>
+      <text class="node-icon" x="1050" y="148">&#x1F6E1;&#xFE0F;</text>
+      <text class="node-label" x="1050" y="167">Enforcement Engine</text>
+      <text class="agent-badge" x="1050" y="180">AGENT</text>
+    </g>
+
+    <!-- SQS Notifications -->
+    <g class="node" data-id="sqs" data-phase="enforcement" onclick="showInfo('sqs')">
+      <rect class="node-box" x="970" y="240" width="160" height="55" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.5)"/>
+      <text class="node-icon" x="1050" y="262">&#x1F4E8;</text>
+      <text class="node-label" x="1050" y="280">SQS + SNS/SES</text>
+      <text class="node-sublabel" x="1050" y="292">Notifications</text>
+    </g>
+
+    <!-- Platform API -->
+    <g class="node" data-id="platform-api" data-phase="enforcement" onclick="showInfo('platform-api')">
+      <rect class="node-box" x="970" y="340" width="160" height="55" fill="rgba(236,72,153,0.1)" stroke="rgba(236,72,153,0.5)"/>
+      <text class="node-icon" x="1050" y="362">&#x1F4F1;</text>
+      <text class="node-label" x="1050" y="380">Platform API</text>
+      <text class="node-sublabel" x="1050" y="392">Ban / Restrict / Warn</text>
+    </g>
+
+    <!-- Audit Trail -->
+    <g class="node" data-id="audit" data-phase="enforcement" onclick="showInfo('audit')">
+      <rect class="node-box" x="970" y="440" width="160" height="55" fill="rgba(16,185,129,0.1)" stroke="rgba(16,185,129,0.5)"/>
+      <text class="node-icon" x="1050" y="462">&#x1F4DC;</text>
+      <text class="node-label" x="1050" y="480">Immutable Audit Log</text>
+      <text class="node-sublabel" x="1050" y="492">7+ Year Retention</text>
+    </g>
+
+    <!-- WebSocket (Dashboard) -->
+    <g class="node" data-id="websocket" data-phase="enforcement" onclick="showInfo('websocket')">
+      <rect class="node-box" x="970" y="540" width="160" height="55" fill="rgba(139,92,246,0.1)" stroke="rgba(139,92,246,0.5)"/>
+      <text class="node-icon" x="1050" y="562">&#x1F4BB;</text>
+      <text class="node-label" x="1050" y="580">WebSocket API GW</text>
+      <text class="node-sublabel" x="1050" y="592">Real-time Dashboard</text>
+    </g>
+
+    <!-- ===== EDGES ===== -->
+    <path class="edge" id="e-kinesis-bp" d="M180,110 Q210,110 210,210 L220,210" stroke="#3b82f6" marker-end="url(#arrowhead)" data-phase="detection"/>
+    <path class="edge" id="e-bp-sage" d="M180,210 L220,210" stroke="#10b981" marker-end="url(#arrowhead)" data-phase="detection"/>
+    <path class="edge" id="e-eb-pp" d="M110,350 L110,390" stroke="#ec4899" marker-end="url(#arrowhead)" data-phase="detection"/>
+    <path class="edge" id="e-pp-intel" d="M180,420 L220,420" stroke="#8b5cf6" marker-end="url(#arrowhead)" data-phase="detection"/>
+    <path class="edge" id="e-detect-sf" d="M360,210 Q380,155 400,155" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="detection,investigation"/>
+    <path class="edge" id="e-detect-sf2" d="M360,420 Q380,155 400,155" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="detection,investigation"/>
+
+    <path class="edge" id="e-sf-evidence" d="M480,190 L445,240" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="investigation"/>
+    <path class="edge" id="e-sf-bedrock" d="M480,190 L605,240" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="investigation"/>
+    <path class="edge" id="e-evidence-conf" d="M445,295 L495,340" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="investigation"/>
+    <path class="edge" id="e-sf-dynamo" d="M495,395 L495,450" stroke="#3b82f6" marker-end="url(#arrowhead)" data-phase="investigation"/>
+    <path class="edge" id="e-evidence-s3" d="M445,295 Q440,540 420,565 L420,565" stroke="#3b82f6" marker-end="url(#arrowhead)" data-phase="investigation"/>
+    <path class="edge" id="e-dynamo-redis" d="M570,477 L600,477" stroke="#ef4444" marker-end="url(#arrowhead)" data-phase="investigation"/>
+
+    <path class="edge" id="e-conf-policy" d="M570,367 Q650,155 720,155" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="investigation,decision"/>
+    <path class="edge" id="e-policy-crisis" d="M795,185 L795,240" stroke="#ef4444" marker-end="url(#arrowhead)" data-phase="decision"/>
+    <path class="edge" id="e-crisis-review" d="M795,295 L795,340" stroke="#ef4444" marker-end="url(#arrowhead)" data-phase="decision"/>
+    <path class="edge" id="e-policy-review" d="M870,155 Q900,360 870,360 L870,360" stroke="#8b5cf6" marker-end="url(#arrowhead)" data-phase="decision"/>
+    <path class="edge" id="e-review-well" d="M795,395 L795,440" stroke="#10b981" marker-end="url(#arrowhead)" data-phase="decision"/>
+
+    <path class="edge" id="e-policy-enforce" d="M870,155 L970,155" stroke="#fbbf24" marker-end="url(#arrowhead)" data-phase="decision,enforcement"/>
+    <path class="edge" id="e-enforce-sqs" d="M1050,185 L1050,240" stroke="#3b82f6" marker-end="url(#arrowhead)" data-phase="enforcement"/>
+    <path class="edge" id="e-enforce-platform" d="M1050,295 L1050,340" stroke="#ec4899" marker-end="url(#arrowhead)" data-phase="enforcement"/>
+    <path class="edge" id="e-enforce-audit" d="M1050,395 L1050,440" stroke="#10b981" marker-end="url(#arrowhead)" data-phase="enforcement"/>
+    <path class="edge" id="e-enforce-ws" d="M1050,495 L1050,540" stroke="#8b5cf6" marker-end="url(#arrowhead)" data-phase="enforcement"/>
+
+    <!-- API Gateway (center bottom) -->
+    <g class="node" data-id="apigw" data-phase="all" onclick="showInfo('apigw')">
+      <rect class="node-box" x="180" y="580" width="160" height="55" fill="rgba(139,92,246,0.1)" stroke="rgba(139,92,246,0.5)"/>
+      <text class="node-icon" x="260" y="602">&#x1F310;</text>
+      <text class="node-label" x="260" y="620">API Gateway (REST)</text>
+      <text class="node-sublabel" x="260" y="632">Cognito Auth + MFA</text>
+    </g>
+
+    <!-- Cognito -->
+    <g class="node" data-id="cognito" data-phase="all" onclick="showInfo('cognito')">
+      <rect class="node-box" x="40" y="520" width="130" height="50" fill="rgba(139,92,246,0.1)" stroke="rgba(139,92,246,0.5)"/>
+      <text class="node-icon" x="105" y="542">&#x1F512;</text>
+      <text class="node-label" x="105" y="557">Cognito</text>
+      <text class="node-sublabel" x="105" y="567">User Pools + MFA</text>
+    </g>
+
+    <!-- CloudWatch -->
+    <g class="node" data-id="cloudwatch" data-phase="all" onclick="showInfo('cloudwatch')">
+      <rect class="node-box" x="180" y="640" width="160" height="40" fill="rgba(59,130,246,0.08)" stroke="rgba(59,130,246,0.3)"/>
+      <text class="node-label" x="260" y="665">CloudWatch + X-Ray</text>
+    </g>
+  </svg>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#fbbf24;"></div>Agent (AI-powered)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6;"></div>AWS Managed Service</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ec4899;"></div>Event / Trigger</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981;"></div>Monitoring / Safety</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6;"></div>External / API</div>
+  </div>
+</div>
+
+<div class="info-panel" id="infoPanel">
+  <button class="close-btn" onclick="hideInfo()">x</button>
+  <h3 id="infoTitle"></h3>
+  <div id="infoTags"></div>
+  <p id="infoDesc"></p>
+  <div class="why" id="infoWhy"></div>
+</div>
+
+<div class="narration-bar" id="narrationBar">
+  <div class="progress-dots" id="progressDots"></div>
+  <div class="narration-text" id="narrationText"></div>
+  <div class="narration-step" id="narrationStep"></div>
+</div>
+
+<script>
+// ===== INFO DATA =====
+const nodeInfo = {
+  'kinesis': {
+    title: 'Amazon Kinesis Data Streams',
+    service: 'Kinesis',
+    agent: false,
+    desc: 'Ingests real-time behavioral events from the app users — messages sent, profile views, swipe patterns, report submissions. Processes thousands of events per second with ordered delivery per shard.',
+    why: 'Why Kinesis: Need ordered, real-time stream processing at scale. Kinesis handles burst traffic during peak hours and guarantees event ordering per user (partition key = user_id).'
+  },
+  'behavioral-processor': {
+    title: 'Behavioral Event Processor',
+    service: 'Lambda',
+    agent: true,
+    desc: 'Autonomous agent that consumes Kinesis records, calculates anomaly scores using message velocity, response rates, report patterns, and profile completion metrics. Triggers investigations when thresholds are exceeded.',
+    why: 'Why Agent: Makes autonomous decisions about which behavioral patterns warrant investigation. Uses tiered thresholds (new/established/veteran accounts) so new accounts get closer scrutiny.'
+  },
+  'eventbridge': {
+    title: 'Amazon EventBridge',
+    service: 'EventBridge',
+    agent: false,
+    desc: 'Receives profile lifecycle events — new account creation, photo uploads, bio updates. Routes events to the Profile Processor for cross-platform blocklist screening.',
+    why: 'Why EventBridge: Decouples the platform events from SafetyAgent processing. Schema registry validates event shapes, and rules precisely route only safety-relevant events.'
+  },
+  'profile-processor': {
+    title: 'Profile Creation Processor',
+    service: 'Lambda',
+    agent: true,
+    desc: 'Autonomous agent that screens new profiles against the Partner Network cross-platform blocklist. Checks device fingerprints and behavioral signatures via SHA-256 hashed identifiers (never raw PII).',
+    why: 'Why Agent: Autonomously blocks known bad actors at signup with 95%+ confidence. Prevents banned users from other platforms from creating app accounts.'
+  },
+  'sagemaker': {
+    title: 'Amazon SageMaker',
+    service: 'SageMaker',
+    agent: false,
+    desc: 'Hosts the trained anomaly detection model that scores user behavioral patterns. Evaluates message velocity, response asymmetry, time-of-day patterns, and profile interaction graphs.',
+    why: 'Why SageMaker: Purpose-built ML inference endpoint with auto-scaling. Model trained on historical trust & safety data with custom features specific to dating app abuse patterns.'
+  },
+  'intel': {
+    title: 'Partner Network Intelligence API',
+    service: 'External (mTLS)',
+    agent: false,
+    desc: 'Cross-platform intelligence sharing across partner platforms. Exchanges only hashed device fingerprints and behavioral signatures — never raw PII.',
+    why: 'Why mTLS: Zero-trust security for cross-platform data exchange. Mutual TLS ensures both parties are authenticated. Only SHA-256 hashes are exchanged for privacy compliance (GDPR/CCPA).'
+  },
+  'stepfunctions': {
+    title: 'AWS Step Functions — Investigation Workflow',
+    service: 'Step Functions',
+    agent: true,
+    desc: 'The central orchestrator agent that coordinates the entire investigation pipeline. Runs evidence gathering, content analysis, confidence scoring, and routing in a defined sequence with parallel branches and automatic retries.',
+    why: 'Why Step Functions: Visual workflow with built-in error handling, retries, and timeouts. Evidence gathering steps run in parallel for speed (must complete in <60s). The state machine IS the agent loop.'
+  },
+  'evidence': {
+    title: 'Evidence Assembler Agent',
+    service: 'Lambda',
+    agent: true,
+    desc: 'Gathers all relevant evidence for a case: user messages, profile photos, report history, device metadata, interaction patterns. Packages evidence for analysis and stores in S3.',
+    why: 'Why Agent: Autonomously decides which evidence types to collect based on the trigger source. A scam report triggers message history analysis; a fake profile report triggers image analysis.'
+  },
+  'bedrock': {
+    title: 'Amazon Bedrock (Claude)',
+    service: 'Bedrock',
+    agent: true,
+    desc: 'The AI reasoning agent that performs deep content analysis — detecting scam patterns, harassment language, threat indicators, crisis signals, and AI-generated profile photos. Returns structured violation assessments.',
+    why: 'Why Bedrock/Claude: Best-in-class natural language understanding for nuanced content moderation. Detects subtle scam language, coded threats, and grooming patterns that keyword matching misses.'
+  },
+  'confidence': {
+    title: 'Confidence Calculator Agent',
+    service: 'Lambda',
+    agent: true,
+    desc: 'Synthesizes all evidence signals into weighted confidence scores per violation type. Uses configurable weights for message analysis (25%), image analysis (15%), behavioral signals (20%), and cross-platform data (30%).',
+    why: 'Why Agent: Makes the critical judgment call — is this 90% scam or 60% scam? The weights are tunable via the config table, and the feedback loop adjusts them based on human reviewer corrections.'
+  },
+  'dynamodb': {
+    title: 'Amazon DynamoDB',
+    service: 'DynamoDB',
+    agent: false,
+    desc: '10 tables prefixed tg-*: cases, evidence metadata, audit logs, blocklist, config, review queue, metrics, reviewer state, anomaly scores, appeals. All encrypted at rest with point-in-time recovery.',
+    why: 'Why DynamoDB: Single-digit millisecond latency for operational data at any scale. Pay-per-request billing means zero cost when idle (dev) and auto-scales under load (prod). GSIs enable efficient queries by user, status, and time.'
+  },
+  's3': {
+    title: 'Amazon S3',
+    service: 'S3',
+    agent: false,
+    desc: 'Three buckets: evidence packages (raw messages, screenshots), audit archives (7+ year retention for compliance), and config backups. Evidence is encrypted with KMS customer-managed keys.',
+    why: 'Why S3: Cost-effective bulk storage with lifecycle policies. Evidence moves to Glacier after 90 days. Audit archives use Object Lock (WORM) for legal compliance — even admins cannot delete.'
+  },
+  'redis': {
+    title: 'Amazon ElastiCache Redis',
+    service: 'ElastiCache',
+    agent: false,
+    desc: 'Hot data cache for rate limit counters, anomaly score cache (15-min staleness), WebSocket session state, and config cache. Sub-millisecond reads for the dashboard and rate limiter.',
+    why: 'Why Redis: Rate limiting requires atomic counters with TTL. Anomaly scores are read on every behavioral event — caching avoids DynamoDB hot partition issues. WebSocket connection tracking needs in-memory speed.'
+  },
+  'policy': {
+    title: 'Policy Engine — Decision Agent',
+    service: 'Lambda',
+    agent: true,
+    desc: 'The autonomous decision-making agent. Routes cases based on confidence thresholds: permanent ban requires 90%, temp restriction requires 75%. Sensitive categories (self-harm, child safety) always escalate regardless of confidence.',
+    why: 'Why Agent: This is the core autonomous decision-maker. It applies configurable policy rules to determine enforcement without human intervention for the majority of cases. The remaining 20-30% escalate to human review.'
+  },
+  'crisis': {
+    title: 'Crisis Response Service',
+    service: 'Lambda',
+    agent: false,
+    desc: 'Handles cases involving self-harm, potential illegal activity, or child safety. Sends wellbeing resources to victims within 5 minutes. Victims in crisis are NEVER autonomously banned.',
+    why: 'Why dedicated service: Legal and ethical requirement. Crisis cases need specialized handling — connecting users to suicide prevention hotlines, mandatory reporting for child safety, law enforcement notification.'
+  },
+  'review': {
+    title: 'Human Review Queue',
+    service: 'DynamoDB + WebSocket',
+    agent: false,
+    desc: 'Priority queue for cases requiring human judgment. Reviewers see full evidence packages, AI confidence scores, and recommended actions. Priority based on severity and time sensitivity.',
+    why: 'Why human-in-loop: Edge cases, appeals, and sensitive categories require human judgment. The system acknowledges its limitations — low confidence or ambiguous cases get expert human review.'
+  },
+  'wellbeing': {
+    title: 'Reviewer Wellbeing Monitor',
+    service: 'Lambda + DynamoDB',
+    agent: false,
+    desc: 'Tracks reviewer exposure to disturbing content (graphic images, self-harm, CSAM). Enforces mandatory breaks, rotation schedules, and exposure limits. Alerts team leads when thresholds approach.',
+    why: 'Why this exists: Content moderator burnout and PTSD are well-documented. This service protects the humans who handle the cases the AI cannot. It is an ethical obligation, not a feature.'
+  },
+  'enforcement': {
+    title: 'Enforcement Engine Agent',
+    service: 'Lambda',
+    agent: true,
+    desc: 'Executes enforcement actions: warnings, content removal, rate limiting, temporary suspension, permanent ban. Calls the the platform API, queues user notifications, and writes immutable audit logs.',
+    why: 'Why Agent: Autonomously executes enforcement within 15 minutes of detection. Handles the full lifecycle — action execution, notification, audit logging, and blocklist updates for cross-platform sharing.'
+  },
+  'sqs': {
+    title: 'Amazon SQS + SNS/SES',
+    service: 'SQS / SNS / SES',
+    agent: false,
+    desc: 'Async notification pipeline. SQS decouples enforcement from notification delivery. SNS fans out to multiple channels. SES sends email notifications to affected users with appeal instructions.',
+    why: 'Why SQS: Enforcement must not block on notification delivery. If email is slow or fails, the ban still takes effect immediately. Dead-letter queue captures failed notifications for retry.'
+  },
+  'platform-api': {
+    title: 'Platform API',
+    service: 'External API',
+    agent: false,
+    desc: 'The platform internal API that actually applies account restrictions — disabling messaging, hiding profiles, suspending accounts, or permanently banning users from the platform.',
+    why: 'Why external call: SafetyAgent is a safety orchestration layer, not the platform itself. It decides and instructs; the platform executes. This separation allows SafetyAgent to serve multiple apps.'
+  },
+  'audit': {
+    title: 'Immutable Audit Log',
+    service: 'DynamoDB + S3 (Object Lock)',
+    agent: false,
+    desc: 'Every enforcement action, human decision, and system event is logged immutably. No application-level updates or deletes allowed. Enforcement halts entirely if audit logging fails (AC-6.9).',
+    why: 'Why immutable: Legal discovery, regulatory compliance, and appeal evidence. If a user challenges a ban, the full decision chain is preserved. 7+ year retention meets GDPR right-to-access requirements.'
+  },
+  'websocket': {
+    title: 'WebSocket API Gateway',
+    service: 'API Gateway v2',
+    agent: false,
+    desc: 'Pushes real-time updates to the ops dashboard — new cases, enforcement actions, metric changes, queue status. Enables the <30-second metric staleness SLA.',
+    why: 'Why WebSocket: The dashboard needs sub-second updates for the operations team. Polling would add 30s latency and unnecessary API load. WebSocket enables instant case-status push notifications.'
+  },
+  'apigw': {
+    title: 'Amazon API Gateway (REST)',
+    service: 'API Gateway',
+    agent: false,
+    desc: 'REST API serving the ops dashboard and external integrations. Cognito authorizer with role-based access: Admin (MFA required), Operator, Reviewer, System, and User (appeals only).',
+    why: 'Why API Gateway: Managed, scalable API with built-in throttling, WAF integration, and Cognito auth. Request validation catches malformed payloads before they hit Lambda. X-Ray tracing for debugging.'
+  },
+  'cognito': {
+    title: 'Amazon Cognito',
+    service: 'Cognito',
+    agent: false,
+    desc: 'User pool for SafetyAgent operators and reviewers. Admin-only account creation, optional MFA (required for config changes), role-based access via custom attributes.',
+    why: 'Why Cognito: Managed auth with MFA, password policies, and JWT tokens. No need to build custom auth for an internal operations tool. Integrates natively with API Gateway authorizers.'
+  },
+  'cloudwatch': {
+    title: 'CloudWatch + X-Ray',
+    service: 'CloudWatch',
+    agent: false,
+    desc: 'Full observability: custom metrics dashboard, Lambda function logs, distributed tracing via X-Ray, anomaly detection alarms, and automated incident alerts.',
+    why: 'Why CloudWatch: Native integration with every AWS service in the stack. Custom dashboard tracks autonomous resolution rate, p99 latencies, queue depth, and reviewer workload in real-time.'
+  }
+};
+
+// ===== NARRATION STEPS =====
+const narrationSteps = [
+  {
+    text: "Welcome to SafetyAgent — an autonomous Trust and Safety system built for the app, protecting millions of users. Let me walk you through how it works, from detection to enforcement.",
+    highlight: [],
+    phase: 'all',
+    duration: 9000
+  },
+  {
+    text: "It all starts with Detection. Real-time behavioral events flow in through Amazon Kinesis — every message sent, profile viewed, and report submitted. This gives us a continuous pulse on user activity.",
+    highlight: ['kinesis'],
+    phase: 'detection',
+    duration: 10000
+  },
+  {
+    text: "The Behavioral Processor agent consumes these events and calculates anomaly scores. It evaluates message velocity, response rates, and patterns. When a user sends 50 messages per hour with near-zero responses — that's a red flag.",
+    highlight: ['behavioral-processor', 'sagemaker'],
+    phase: 'detection',
+    duration: 11000
+  },
+  {
+    text: "Simultaneously, EventBridge captures profile lifecycle events. When a new account is created, the Profile Processor agent checks it against the cross-platform blocklist — catching known bad actors from partner apps.",
+    highlight: ['eventbridge', 'profile-processor', 'intel'],
+    phase: 'detection',
+    duration: 12000
+  },
+  {
+    text: "When anomaly thresholds are exceeded, AWS Step Functions kicks off the Investigation Workflow. This is the orchestrator agent — it coordinates evidence gathering, AI analysis, and confidence scoring in a defined sequence.",
+    highlight: ['stepfunctions'],
+    phase: 'investigation',
+    duration: 10000
+  },
+  {
+    text: "The Evidence Assembler agent gathers all relevant data — messages, photos, report history, device metadata. Meanwhile, Amazon Bedrock with Claude performs deep content analysis, detecting scam language, coded threats, and grooming patterns that simple keyword matching would miss.",
+    highlight: ['evidence', 'bedrock'],
+    phase: 'investigation',
+    duration: 12000
+  },
+  {
+    text: "The Confidence Calculator agent then synthesizes all signals into weighted scores. Message analysis contributes 25%, image analysis 15%, behavioral signals 20%, and cross-platform intel 30%. A permanent ban requires 90% confidence.",
+    highlight: ['confidence'],
+    phase: 'investigation',
+    duration: 11000
+  },
+  {
+    text: "All operational data lives in DynamoDB — 10 tables with sub-millisecond access. Evidence packages are stored in S3 with encryption. Redis provides the hot cache layer for rate limiting and real-time dashboard queries.",
+    highlight: ['dynamodb', 's3', 'redis'],
+    phase: 'investigation',
+    duration: 10000
+  },
+  {
+    text: "Now the critical moment — the Policy Engine, our decision agent. It applies configurable thresholds: 90% for permanent bans, 75% for temporary restrictions. This agent autonomously resolves the majority of cases without human intervention.",
+    highlight: ['policy'],
+    phase: 'decision',
+    duration: 11000
+  },
+  {
+    text: "But there are hard lines. Cases involving self-harm, child safety, or illegal activity ALWAYS escalate to human review, regardless of confidence. The Crisis Response service sends wellbeing resources to victims within 5 minutes. Victims in crisis are never autonomously banned.",
+    highlight: ['crisis', 'review'],
+    phase: 'decision',
+    duration: 13000
+  },
+  {
+    text: "We also protect the humans in the loop. The Wellbeing Monitor tracks reviewer exposure to disturbing content and enforces mandatory breaks. Content moderator burnout is a documented problem — this is an ethical safeguard, not a feature.",
+    highlight: ['wellbeing'],
+    phase: 'decision',
+    duration: 10000
+  },
+  {
+    text: "Finally, the Enforcement Engine agent executes actions — warnings, content removal, rate limits, suspensions, or permanent bans. It calls the Platform API, queues notifications via SQS, and writes an immutable audit log. Every action is traceable for 7-plus years.",
+    highlight: ['enforcement', 'sqs', 'platform-api', 'audit'],
+    phase: 'enforcement',
+    duration: 12000
+  },
+  {
+    text: "Real-time updates push to the operations dashboard via WebSocket, keeping the team informed with under 30 seconds of metric staleness. The entire pipeline — detection to enforcement — completes in under 15 minutes.",
+    highlight: ['websocket'],
+    phase: 'enforcement',
+    duration: 10000
+  },
+  {
+    text: "That's SafetyAgent. Seven autonomous agents orchestrated by Step Functions, powered by 14 AWS services, achieving high autonomous resolution rates — and always knowing when to ask a human for help — and always knowing when to ask a human for help.",
+    highlight: [],
+    phase: 'all',
+    duration: 11000
+  }
+];
+
+// ===== STATE =====
+let isPlaying = false;
+let currentStep = 0;
+let narrationTimeout = null;
+let audioElement = null;
+let bgm = new BGMEngine();
+
+// ===== POLLY PRE-GENERATED AUDIO =====
+async function speakText(text) {
+  return new Promise((resolve) => {
+    const stepIndex = currentStep.toString().padStart(2, '0');
+    const audioSrc = `/narration/step-${stepIndex}.mp3`;
+
+    if (audioElement) {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+    }
+
+    audioElement = new Audio(audioSrc);
+    audioElement.onended = resolve;
+    audioElement.onerror = () => {
+      console.warn('Audio file not found, advancing after timeout');
+      setTimeout(resolve, narrationSteps[currentStep]?.duration || 5000);
+    };
+    audioElement.play().catch(() => {
+      setTimeout(resolve, narrationSteps[currentStep]?.duration || 5000);
+    });
+  });
+}
+
+// ===== NARRATION CONTROL =====
+function toggleNarration() {
+  if (isPlaying) {
+    stopNarration();
+  } else {
+    startNarration();
+  }
+}
+
+function startNarration() {
+  isPlaying = true;
+  currentStep = 0;
+  const btn = document.getElementById('playBtn');
+  btn.textContent = '⏹ Stop';
+  btn.classList.add('playing');
+  document.getElementById('narrationBar').classList.add('visible');
+  renderProgressDots();
+
+  // Start background music
+  bgm.start();
+
+  playStep();
+}
+
+function stopNarration() {
+  isPlaying = false;
+  const btn = document.getElementById('playBtn');
+  btn.textContent = '▶ Play Narration';
+  btn.classList.remove('playing');
+  document.getElementById('narrationBar').classList.remove('visible');
+  if (narrationTimeout) clearTimeout(narrationTimeout);
+  if (audioElement) audioElement.pause();
+
+  // Fade out background music
+  bgm.fadeOut(1.5);
+
+  resetHighlights();
+}
+
+async function playStep() {
+  if (!isPlaying || currentStep >= narrationSteps.length) {
+    if (isPlaying) stopNarration();
+    return;
+  }
+
+  const step = narrationSteps[currentStep];
+  document.getElementById('narrationText').textContent = step.text;
+  document.getElementById('narrationStep').textContent = `${currentStep + 1} / ${narrationSteps.length}`;
+  updateProgressDots();
+
+  // Highlight nodes — glow active ones, dim everything else
+  resetHighlights();
+  if (step.highlight.length > 0) {
+    document.querySelectorAll('.node').forEach(n => {
+      n.classList.add('dimmed');
+    });
+    step.highlight.forEach(id => {
+      const node = document.querySelector(`[data-id="${id}"]`);
+      if (node) {
+        node.classList.remove('dimmed');
+        node.classList.add('highlighted');
+      }
+    });
+  }
+
+  // Activate edges for phase
+  highlightPhaseEdges(step.phase);
+
+  // Speak
+  await speakText(step.text);
+
+  // Small pause between steps
+  if (isPlaying) {
+    narrationTimeout = setTimeout(() => {
+      currentStep++;
+      playStep();
+    }, 800);
+  }
+}
+
+function renderProgressDots() {
+  const container = document.getElementById('progressDots');
+  container.innerHTML = narrationSteps.map((_, i) => `<div class="progress-dot" data-step="${i}"></div>`).join('');
+}
+
+function updateProgressDots() {
+  document.querySelectorAll('.progress-dot').forEach((dot, i) => {
+    dot.classList.remove('active', 'done');
+    if (i === currentStep) dot.classList.add('active');
+    else if (i < currentStep) dot.classList.add('done');
+  });
+}
+
+// ===== INTERACTION =====
+function showInfo(nodeId) {
+  const info = nodeInfo[nodeId];
+  if (!info) return;
+
+  document.getElementById('infoTitle').textContent = info.title;
+  let tags = `<span class="service-tag">${info.service}</span>`;
+  if (info.agent) tags += `<span class="service-tag agent-tag">AI Agent</span>`;
+  document.getElementById('infoTags').innerHTML = tags;
+  document.getElementById('infoDesc').textContent = info.desc;
+  document.getElementById('infoWhy').textContent = info.why;
+  document.getElementById('infoPanel').classList.add('visible');
+}
+
+function hideInfo() {
+  document.getElementById('infoPanel').classList.remove('visible');
+}
+
+function highlightPhase(phase) {
+  resetHighlights();
+  if (phase === 'all') {
+    document.querySelectorAll('.node').forEach(n => n.style.opacity = '1');
+    document.querySelectorAll('.edge').forEach(e => { e.style.opacity = '0.4'; e.classList.remove('flowing'); });
+    return;
+  }
+
+  document.querySelectorAll('.node').forEach(n => {
+    const nodePhase = n.dataset.phase;
+    if (nodePhase === phase || nodePhase === 'all') {
+      n.style.opacity = '1';
+    } else {
+      n.style.opacity = '0.2';
+    }
+  });
+
+  document.querySelectorAll('.edge').forEach(e => {
+    const edgePhase = e.dataset.phase || '';
+    if (edgePhase.includes(phase)) {
+      e.classList.add('flowing');
+      e.style.opacity = '0.8';
+    } else {
+      e.style.opacity = '0.1';
+      e.classList.remove('flowing');
+    }
+  });
+}
+
+function highlightPhaseEdges(phase) {
+  document.querySelectorAll('.edge').forEach(e => {
+    const edgePhase = e.dataset.phase || '';
+    if (phase === 'all' || edgePhase.includes(phase)) {
+      e.classList.add('flowing');
+    } else {
+      e.classList.remove('flowing');
+    }
+  });
+}
+
+function resetHighlights() {
+  document.querySelectorAll('.node').forEach(n => {
+    n.classList.remove('highlighted');
+    n.classList.remove('dimmed');
+    n.style.opacity = '1';
+  });
+  document.querySelectorAll('.edge').forEach(e => {
+    e.classList.remove('flowing');
+    e.style.opacity = '0.4';
+  });
+}
+
+
+// BGM volume cycle
+const bgmLevels = [
+  { label: 'Off', vol: 0 },
+  { label: 'Low', vol: 0.1 },
+  { label: 'Med', vol: 0.2 },
+  { label: 'High', vol: 0.4 },
+];
+let bgmLevelIndex = 2; // Start at Medium (20%)
+
+function toggleBGMVolume() {
+  bgmLevelIndex = (bgmLevelIndex + 1) % bgmLevels.length;
+  const level = bgmLevels[bgmLevelIndex];
+  bgm.setVolume(level.vol);
+  document.getElementById('bgmBtn').innerHTML = `&#9835; BGM: ${level.label}`;
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); toggleNarration(); }
+  if (e.code === 'Escape') { hideInfo(); stopNarration(); }
+  if (e.code === 'KeyM') { toggleBGMVolume(); }
+});
+</script>
+
+</body>
+</html>

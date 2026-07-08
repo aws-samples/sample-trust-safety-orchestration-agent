@@ -1,0 +1,220 @@
+{
+  "Comment": "SafetyAgent Investigation Workflow — orchestrates evidence gathering, scoring, and decision routing",
+  "StartAt": "AssembleEvidence",
+  "States": {
+    "AssembleEvidence": {
+      "Type": "Task",
+      "Resource": "${EvidenceAssemblerArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_id.$": "$.user_id",
+        "trigger_source.$": "$.trigger_source"
+      },
+      "ResultPath": "$.evidence",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "EscalateOnError"
+        }
+      ],
+      "Next": "CalculateConfidence"
+    },
+
+    "CalculateConfidence": {
+      "Type": "Task",
+      "Resource": "${ConfidenceCalculatorArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "evidence.$": "$.evidence"
+      },
+      "ResultPath": "$.confidence",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "EscalateOnError"
+        }
+      ],
+      "Next": "CheckSensitiveCategory"
+    },
+
+    "CheckSensitiveCategory": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Or": [
+            {
+              "Variable": "$.evidence.crisis_detected",
+              "BooleanEquals": true
+            },
+            {
+              "Variable": "$.evidence.sensitive_category",
+              "StringEquals": "self_harm"
+            },
+            {
+              "Variable": "$.evidence.sensitive_category",
+              "StringEquals": "child_safety"
+            },
+            {
+              "Variable": "$.evidence.sensitive_category",
+              "StringEquals": "illegal_activity"
+            }
+          ],
+          "Next": "HandleCrisis"
+        }
+      ],
+      "Default": "RouteDecision"
+    },
+
+    "HandleCrisis": {
+      "Type": "Task",
+      "Resource": "${CrisisHandlerArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_id.$": "$.user_id",
+        "evidence.$": "$.evidence",
+        "confidence.$": "$.confidence"
+      },
+      "ResultPath": "$.crisis_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "EscalateToHumanReview"
+    },
+
+    "RouteDecision": {
+      "Type": "Task",
+      "Resource": "${PolicyRouterArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "confidence.$": "$.confidence",
+        "evidence.$": "$.evidence"
+      },
+      "ResultPath": "$.routing",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "EscalateOnError"
+        }
+      ],
+      "Next": "CheckRoutingDecision"
+    },
+
+    "CheckRoutingDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.routing.decision",
+          "StringEquals": "autonomous",
+          "Next": "ExecuteAutonomousAction"
+        },
+        {
+          "Variable": "$.routing.decision",
+          "StringEquals": "escalate",
+          "Next": "EscalateToHumanReview"
+        }
+      ],
+      "Default": "EscalateToHumanReview"
+    },
+
+    "ExecuteAutonomousAction": {
+      "Type": "Task",
+      "Resource": "${EnforcementExecutorArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_id.$": "$.user_id",
+        "action.$": "$.routing.action",
+        "violation_type.$": "$.confidence.primary_violation",
+        "confidence_score.$": "$.confidence.primary_score",
+        "is_autonomous": true
+      },
+      "ResultPath": "$.enforcement",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "EscalateOnError"
+        }
+      ],
+      "Next": "InvestigationComplete"
+    },
+
+    "EscalateToHumanReview": {
+      "Type": "Task",
+      "Resource": "${EscalationHandlerArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_id.$": "$.user_id",
+        "evidence.$": "$.evidence",
+        "confidence.$": "$.confidence",
+        "reason.$": "$.routing.escalation_reason"
+      },
+      "ResultPath": "$.escalation",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "InvestigationComplete"
+    },
+
+    "EscalateOnError": {
+      "Type": "Task",
+      "Resource": "${EscalationHandlerArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_id.$": "$.user_id",
+        "reason": "system_error",
+        "error.$": "$.error"
+      },
+      "ResultPath": "$.escalation",
+      "Next": "InvestigationComplete"
+    },
+
+    "InvestigationComplete": {
+      "Type": "Succeed"
+    }
+  }
+}

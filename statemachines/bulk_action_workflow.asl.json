@@ -1,0 +1,73 @@
+{
+  "Comment": "SafetyAgent Bulk Action Workflow — processes coordinated attack enforcement",
+  "StartAt": "ValidateConfidence",
+  "States": {
+    "ValidateConfidence": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.confidence_score",
+          "NumericGreaterThanEquals": 0.85,
+          "Next": "ExecuteBulkAction"
+        }
+      ],
+      "Default": "EscalateToHumanReview"
+    },
+
+    "ExecuteBulkAction": {
+      "Type": "Task",
+      "Resource": "${BulkEnforcementArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_ids.$": "$.user_ids",
+        "action.$": "$.action",
+        "violation_type.$": "$.violation_type",
+        "attack_pattern.$": "$.attack_pattern",
+        "is_bulk": true
+      },
+      "ResultPath": "$.enforcement_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "EscalateToHumanReview"
+        }
+      ],
+      "Next": "BulkActionComplete"
+    },
+
+    "EscalateToHumanReview": {
+      "Type": "Task",
+      "Resource": "${EscalationHandlerArn}",
+      "Parameters": {
+        "case_id.$": "$.case_id",
+        "user_ids.$": "$.user_ids",
+        "confidence_score.$": "$.confidence_score",
+        "attack_pattern.$": "$.attack_pattern",
+        "reason": "bulk_action_low_confidence"
+      },
+      "ResultPath": "$.escalation_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "BulkActionComplete"
+    },
+
+    "BulkActionComplete": {
+      "Type": "Succeed"
+    }
+  }
+}
