@@ -1,0 +1,4 @@
+boto3>=1.34.0
+redis>=5.0.0
+ulid-py>=1.1.0
+pydantic>=2.5.0

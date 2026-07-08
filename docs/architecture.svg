@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="1200" height="600" fill="#fafafa"/>
+  <text x="600" y="35" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a2e">Trust &amp; Safety Orchestration Agent — AWS Architecture</text>
+  <text x="600" y="55" text-anchor="middle" font-size="12" fill="#666">Event-driven pipeline: Detection → Investigation → Decision → Enforcement</text>
+  <rect x="30" y="80" width="120" height="50" rx="8" fill="#e8f4fd" stroke="#0ea5e9" stroke-width="1.5"/>
+  <text x="90" y="100" text-anchor="middle" font-size="10" font-weight="600" fill="#0369a1">Platform Users</text>
+  <text x="90" y="115" text-anchor="middle" font-size="8" fill="#666">Reports &amp; Flags</text>
+  <rect x="180" y="80" width="120" height="50" rx="8" fill="#e8f4fd" stroke="#0ea5e9" stroke-width="1.5"/>
+  <text x="240" y="100" text-anchor="middle" font-size="10" font-weight="600" fill="#0369a1">T&amp;S Reviewers</text>
+  <text x="240" y="115" text-anchor="middle" font-size="8" fill="#666">Dashboard &amp; Review</text>
+  <rect x="20" y="150" width="1160" height="430" rx="12" fill="none" stroke="#232F3E" stroke-width="2" stroke-dasharray="6 3"/>
+  <text x="40" y="170" font-size="11" font-weight="600" fill="#232F3E">AWS Cloud</text>
+  <rect x="40" y="190" width="350" height="170" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+  <text x="215" y="210" text-anchor="middle" font-size="12" font-weight="700" fill="#ea580c">DETECTION</text>
+  <rect x="60" y="225" width="140" height="40" rx="6" fill="#fef3c7" stroke="#d97706"/>
+  <text x="130" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Kinesis Stream</text>
+  <text x="130" y="255" text-anchor="middle" font-size="7" fill="#666">Behavioral Events</text>
+  <rect x="60" y="280" width="140" height="40" rx="6" fill="#fef3c7" stroke="#d97706"/>
+  <text x="130" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Behavioral Processor</text>
+  <text x="130" y="310" text-anchor="middle" font-size="7" fill="#666">Anomaly Scoring (Lambda)</text>
+  <rect x="220" y="225" width="150" height="40" rx="6" fill="#fef3c7" stroke="#d97706"/>
+  <text x="295" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">EventBridge</text>
+  <text x="295" y="255" text-anchor="middle" font-size="7" fill="#666">Profile &amp; Lifecycle Events</text>
+  <rect x="220" y="280" width="150" height="40" rx="6" fill="#fef3c7" stroke="#d97706"/>
+  <text x="295" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#92400e">Profile Processor</text>
+  <text x="295" y="310" text-anchor="middle" font-size="7" fill="#666">Blocklist Check (Lambda)</text>
+  <rect x="420" y="190" width="340" height="170" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="590" y="210" text-anchor="middle" font-size="12" font-weight="700" fill="#7c3aed">INVESTIGATION</text>
+  <rect x="440" y="225" width="150" height="40" rx="6" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="515" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#5b21b6">Step Functions</text>
+  <text x="515" y="255" text-anchor="middle" font-size="7" fill="#666">Orchestrator (ASL)</text>
+  <rect x="610" y="225" width="130" height="40" rx="6" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="675" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#5b21b6">Evidence Assembler</text>
+  <text x="675" y="255" text-anchor="middle" font-size="7" fill="#666">Parallel Gather (Lambda)</text>
+  <rect x="440" y="280" width="150" height="40" rx="6" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="515" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#5b21b6">Amazon Bedrock</text>
+  <text x="515" y="310" text-anchor="middle" font-size="7" fill="#666">Claude — Content Analysis</text>
+  <rect x="610" y="280" width="130" height="40" rx="6" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="675" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#5b21b6">Confidence Scorer</text>
+  <text x="675" y="310" text-anchor="middle" font-size="7" fill="#666">Weighted Signals (Lambda)</text>
+  <rect x="790" y="190" width="370" height="170" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+  <text x="975" y="210" text-anchor="middle" font-size="12" font-weight="700" fill="#059669">DECISION &amp; ENFORCEMENT</text>
+  <rect x="810" y="225" width="150" height="40" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="885" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#166534">Policy Engine</text>
+  <text x="885" y="255" text-anchor="middle" font-size="7" fill="#666">Threshold Rules (Lambda)</text>
+  <rect x="990" y="225" width="150" height="40" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="1065" y="242" text-anchor="middle" font-size="9" font-weight="600" fill="#166534">Enforcement Engine</text>
+  <text x="1065" y="255" text-anchor="middle" font-size="7" fill="#666">Actions (Lambda)</text>
+  <rect x="810" y="280" width="150" height="40" rx="6" fill="#fef2f2" stroke="#dc2626"/>
+  <text x="885" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#991b1b">Crisis Response</text>
+  <text x="885" y="310" text-anchor="middle" font-size="7" fill="#666">Self-harm → Human (Lambda)</text>
+  <rect x="990" y="280" width="150" height="40" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="1065" y="297" text-anchor="middle" font-size="9" font-weight="600" fill="#166534">Notification Service</text>
+  <text x="1065" y="310" text-anchor="middle" font-size="7" fill="#666">SQS + SES (Lambda)</text>
+  <rect x="40" y="390" width="1120" height="100" rx="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.5"/>
+  <text x="600" y="410" text-anchor="middle" font-size="12" font-weight="700" fill="#0284c7">DATA &amp; STORAGE</text>
+  <rect x="60" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="125" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">DynamoDB</text>
+  <text x="125" y="458" text-anchor="middle" font-size="7" fill="#666">10 Tables (On-Demand)</text>
+  <rect x="210" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="275" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">S3</text>
+  <text x="275" y="458" text-anchor="middle" font-size="7" fill="#666">Evidence + Audit Archive</text>
+  <rect x="360" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="425" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">ElastiCache Redis</text>
+  <text x="425" y="458" text-anchor="middle" font-size="7" fill="#666">Rate Limit + Cache</text>
+  <rect x="510" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="575" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">API Gateway</text>
+  <text x="575" y="458" text-anchor="middle" font-size="7" fill="#666">REST + WebSocket</text>
+  <rect x="660" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="725" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">Cognito</text>
+  <text x="725" y="458" text-anchor="middle" font-size="7" fill="#666">JWT + MFA Auth</text>
+  <rect x="810" y="425" width="130" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="875" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">CloudWatch</text>
+  <text x="875" y="458" text-anchor="middle" font-size="7" fill="#666">Metrics + Alarms</text>
+  <rect x="960" y="425" width="180" height="45" rx="6" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="1050" y="445" text-anchor="middle" font-size="9" font-weight="600" fill="#0369a1">Partner Network API</text>
+  <text x="1050" y="458" text-anchor="middle" font-size="7" fill="#666">Cross-Platform Intel (mTLS)</text>
+  <path d="M390 270 L420 270" stroke="#7c3aed" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M760 270 L790 270" stroke="#059669" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M600 360 L600 390" stroke="#0284c7" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <rect x="40" y="520" width="1120" height="55" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+  <text x="60" y="542" font-size="10" font-weight="600" fill="#334155">Key:</text>
+  <rect x="100" y="533" width="12" height="12" rx="2" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="118" y="543" font-size="9" fill="#555">Detection</text>
+  <rect x="190" y="533" width="12" height="12" rx="2" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="208" y="543" font-size="9" fill="#555">Investigation</text>
+  <rect x="300" y="533" width="12" height="12" rx="2" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="318" y="543" font-size="9" fill="#555">Decision/Enforcement</text>
+  <rect x="450" y="533" width="12" height="12" rx="2" fill="#e0f2fe" stroke="#0ea5e9"/>
+  <text x="468" y="543" font-size="9" fill="#555">Data/Storage</text>
+  <rect x="560" y="533" width="12" height="12" rx="2" fill="#fef2f2" stroke="#dc2626"/>
+  <text x="578" y="543" font-size="9" fill="#555">Always Human Review</text>
+  <text x="60" y="565" font-size="9" fill="#64748b">23 Lambda functions · 2 Step Functions workflows · 11 DynamoDB tables · Serverless &amp; event-driven · Human-in-the-loop for sensitive cases</text>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#666"/>
+    </marker>
+  </defs>
+</svg>
