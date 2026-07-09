@@ -69,13 +69,13 @@ This installs deps, builds, deploys a lightweight stack (no VPC/Redis), seeds de
 
 If `make quickstart` fails or you prefer to run each step manually, follow these in order from the project root:
 
-**Step 1: Install dependencies and build**
+##### Step 1: Install dependencies and build
 
 ```bash
 ./setup.sh
 ```
 
-**Step 2: Deploy the backend**
+##### Step 2: Deploy the backend
 
 For dev/demo (no VPC/Redis, faster deploy):
 
@@ -93,7 +93,7 @@ When prompted, set `Environment` to `prod`, `UseRedis` to `true`, and configure 
 
 > **Note:** Save the outputs printed at the end of the deploy — you'll need `RestApiUrl`, `WebSocketUrl`, `FrontendBucketName`, and `CloudFrontDistributionId`.
 
-**Step 3: Seed demo data**
+##### Step 3: Seed demo data
 
 > **⚠️ Run from the project root. Use the same `--env` value you deployed with (e.g., `dev` or `prod`).**
 
@@ -101,7 +101,7 @@ When prompted, set `Environment` to `prod`, `UseRedis` to `true`, and configure 
 uv run python scripts/seed_demo_data.py --env dev --region us-east-1
 ```
 
-**Step 4: Run the frontend locally (optional)**
+##### Step 4: Run the frontend locally (optional)
 
 ```bash
 cd frontend
@@ -110,7 +110,7 @@ npm install && npm run dev
 
 Open http://localhost:3000 — it runs in demo mode with mock data by default.
 
-**Step 5: Deploy the frontend to S3 + CloudFront**
+##### Step 5: Deploy the frontend to S3 + CloudFront
 
 From the project root:
 
