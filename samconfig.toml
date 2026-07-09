@@ -7,8 +7,10 @@ s3_prefix = "trust-safety-orchestration"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Environment=\"dev\""
+parameter_overrides = "Environment=\"dev\" PlatformUserApiUrl=\"https://internal-api.example.com/users\" PlatformMessagingApiUrl=\"https://internal-api.example.com/messages\" BedrockModelId=\"anthropic.claude-3-sonnet-20240229-v1:0\" PartnerIntelApiUrl=\"https://intel-api.partner-network.internal\" VpcCidr=\"10.0.0.0/16\" PrivateSubnet1Cidr=\"10.0.1.0/24\" PrivateSubnet2Cidr=\"10.0.2.0/24\" RedisNodeType=\"cache.t3.medium\" UseRedis=\"true\""
 tags = "Project=\"TrustSafetyOrchestration\" Team=\"TrustAndSafety\""
+disable_rollback = true
+image_repositories = []
 
 [default.build.parameters]
 use_container = false
