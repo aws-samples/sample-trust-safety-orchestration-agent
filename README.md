@@ -48,68 +48,85 @@ npm install && npm run dev
 
 Open http://localhost:5173 — the dashboard runs in **demo mode** with mock data. No backend, no deploy, no AWS credentials required.
 
-### Deploy to AWS (full stack)
+### Deploy to AWS (one command)
 
 ```bash
 cd trust-safety-orchestration-agent
 make quickstart
 ```
 
-That's it. This installs deps, builds, deploys a lightweight stack (no VPC/Redis), seeds demo data, and starts the frontend connected to your live backend.
+This installs deps, builds, deploys a lightweight stack (no VPC/Redis), seeds demo data, and starts the frontend locally connected to your live backend.
 
-### Manual steps (if you prefer)
+### Deploy to AWS (step by step)
 
-```bash
-./setup.sh                    # Check prereqs, install deps, build
-sam deploy --guided \         # Deploy without VPC/Redis (fast, ~2 min)
-  --parameter-overrides "UseRedis=false"
-python scripts/seed_demo_data.py   # Seed demo data
-cd frontend && npm run dev         # Start dashboard
-```
+If `make quickstart` fails or you prefer to run each step manually, follow these in order from the project root:
 
-### Enterprise / Production deployment (full stack)
-
-For production workloads, deploy with VPC and ElastiCache Redis enabled (the default):
+**Step 1: Install dependencies and build**
 
 ```bash
 ./setup.sh
+```
+
+**Step 2: Deploy the backend**
+
+For dev/demo (no VPC/Redis, faster deploy):
+
+```bash
+sam deploy --guided --parameter-overrides "UseRedis=false Environment=dev"
+```
+
+For production (includes VPC, Redis, security groups):
+
+```bash
 sam deploy --guided
 ```
 
-When prompted for parameters:
-- `Environment`: `prod` (or `staging`)
-- `UseRedis`: `true` (default — includes VPC, Redis, security groups)
-- `RedisNodeType`: `cache.t3.medium` (or larger for high-throughput)
-- `PlatformUserApiUrl`: Your platform's internal user API endpoint
-- `PlatformMessagingApiUrl`: Your platform's messaging API endpoint
+When prompted, set `Environment` to `prod`, `UseRedis` to `true`, and configure your platform API URLs.
 
-This deploys the full production stack:
-- **VPC** with private subnets and VPC endpoints (DynamoDB, S3)
-- **ElastiCache Redis** for rate limiting, caching, and session management
-- **Security groups** isolating Redis and Lambda traffic
-- All Lambda functions run inside the VPC for network-level isolation
+> **Note:** Save the outputs printed at the end of the deploy — you'll need `RestApiUrl`, `WebSocketUrl`, `FrontendBucketName`, and `CloudFrontDistributionId`.
 
-Seed initial configuration:
+**Step 3: Seed demo data**
 
-> **⚠️ Run this from the project root directory, not from `frontend/`. Use the same `--env` value you deployed with.**
+> **⚠️ Run from the project root. Use the same `--env` value you deployed with (e.g., `dev` or `prod`).**
 
 ```bash
-uv run python scripts/seed_demo_data.py --env prod --region us-east-1
+uv run python scripts/seed_demo_data.py --env dev --region us-east-1
 ```
 
-Build and deploy the frontend to S3 + CloudFront:
+**Step 4: Run the frontend locally (optional)**
+
+```bash
+cd frontend
+npm install && npm run dev
+```
+
+Open http://localhost:3000 — it runs in demo mode with mock data by default.
+
+**Step 5: Deploy the frontend to S3 + CloudFront**
+
+From the project root:
 
 ```bash
 cd frontend
 cp .env.example .env.production
 ```
 
-Edit `.env.production` and set `VITE_API_BASE_URL` and `VITE_WS_URL` from the SAM deploy outputs, then build and upload:
+Edit `.env.production` and set the values from your SAM deploy outputs:
+
+```
+VITE_API_BASE_URL=https://<your-api-id>.execute-api.<region>.amazonaws.com/<env>
+VITE_WS_URL=wss://<your-ws-id>.execute-api.<region>.amazonaws.com/<env>
+```
+
+Build and upload:
 
 ```bash
 npm run build
 aws s3 sync dist/ s3://<your-frontend-bucket>/ --delete
+aws cloudfront create-invalidation --distribution-id <your-distribution-id> --paths "/*"
 ```
+
+Your app is now live at `https://<your-cloudfront-domain>`.
 
 **Estimated production costs** (moderate traffic, ~1M events/day):
 - ElastiCache Redis (cache.t3.medium): ~$50/month
