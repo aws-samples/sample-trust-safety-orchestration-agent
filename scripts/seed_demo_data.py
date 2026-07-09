@@ -21,6 +21,8 @@ args = parser.parse_args()
 session = boto3.Session(region_name=args.region)
 dynamodb = session.resource("dynamodb")
 sts = session.client("sts")
+cognito = session.client("cognito-idp")
+cf = session.client("cloudformation")
 
 ENV = args.env
 ACCOUNT_ID = sts.get_caller_identity()["Account"]
@@ -249,6 +251,38 @@ def seed_evidence_metadata(cases):
     print(f"  Created {count} evidence metadata records")
 
 
+def seed_cognito_user():
+    print("Seeding Cognito demo user...")
+    stack_name = "trust-safety-orch-dev" if ENV == "dev" else f"trust-safety-orchestration"
+    try:
+        resp = cf.describe_stacks(StackName=stack_name)
+        outputs = {o["OutputKey"]: o["OutputValue"] for o in resp["Stacks"][0]["Outputs"]}
+        user_pool_id = outputs.get("CognitoUserPoolId")
+    except Exception:
+        print("  Skipped — could not find stack outputs for Cognito User Pool ID")
+        return
+
+    username = "admin"
+    password = "SafetyAdmin123!"
+    try:
+        cognito.admin_get_user(UserPoolId=user_pool_id, Username=username)
+        print(f"  User '{username}' already exists — skipped")
+    except cognito.exceptions.UserNotFoundException:
+        cognito.admin_create_user(
+            UserPoolId=user_pool_id,
+            Username=username,
+            UserAttributes=[{"Name": "custom:role", "Value": "admin"}],
+            TemporaryPassword=password,
+        )
+        cognito.admin_set_user_password(
+            UserPoolId=user_pool_id,
+            Username=username,
+            Password=password,
+            Permanent=True,
+        )
+        print(f"  Created user '{username}' with password '{password}'")
+
+
 if __name__ == "__main__":
     print("=== SafetyAgent Demo Data Seeder ===\n")
 
@@ -270,8 +304,10 @@ if __name__ == "__main__":
         seed_config()
         seed_blocklist()
         seed_evidence_metadata(cases)
+        seed_cognito_user()
         print("\n✓ Done! Demo data seeded successfully.")
         print(f"  Tables populated in env={ENV}, region={session.region_name}")
+        print(f"  Login: username=admin, password=SafetyAdmin123!")
         print(f"  Start the frontend: cd frontend && npm run dev")
     except Exception as e:
         print(f"\nERROR: Seeding failed — {e}")
