@@ -89,10 +89,9 @@ This deploys the full production stack:
 - **Security groups** isolating Redis and Lambda traffic
 - All Lambda functions run inside the VPC for network-level isolation
 
-Seed initial configuration (run from the project root):
+Seed initial configuration (run from the project root, not from `frontend/`):
 
 ```bash
-cd trust-safety-orchestration-agent
 python scripts/seed_demo_data.py --env prod --region us-east-1
 ```
 
