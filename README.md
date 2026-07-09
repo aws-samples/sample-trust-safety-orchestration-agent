@@ -31,7 +31,7 @@ The system follows an event-driven pipeline: **Detection > Investigation > Decis
 - [AWS CLI](https://aws.amazon.com/cli/) v2 (configured with credentials)
 - [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) v1.90+
 - [uv](https://docs.astral.sh/uv/) (auto-installed by `setup.sh` if missing)
-- Node.js 18+ and npm (for frontend)
+- Node.js 20+ and npm (for frontend)
 - An AWS account with appropriate permissions
 
 > **Note:** `uv` manages Python versions and dependencies automatically. You don't need to install Python separately — `uv` handles it.
@@ -89,16 +89,24 @@ This deploys the full production stack:
 - **Security groups** isolating Redis and Lambda traffic
 - All Lambda functions run inside the VPC for network-level isolation
 
-```bash
-# Seed initial configuration
-python scripts/seed_demo_data.py --env prod --region us-east-1
+Seed initial configuration:
 
-# Build and deploy frontend to your CDN / S3 + CloudFront
+```bash
+python scripts/seed_demo_data.py --env prod --region us-east-1
+```
+
+Build and deploy the frontend to S3 + CloudFront:
+
+```bash
 cd frontend
 cp .env.example .env.production
-# Set VITE_API_URL and VITE_WS_URL from SAM deploy outputs
+```
+
+Edit `.env.production` and set `VITE_API_BASE_URL` and `VITE_WS_URL` from the SAM deploy outputs, then build and upload:
+
+```bash
 npm run build
-# Upload dist/ to your hosting (S3, Amplify, etc.)
+aws s3 sync dist/ s3://<your-frontend-bucket>/ --delete
 ```
 
 **Estimated production costs** (moderate traffic, ~1M events/day):
