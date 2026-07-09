@@ -48,7 +48,11 @@ npm install && npm run dev
 
 Open http://localhost:5173 — the dashboard runs in **demo mode** with mock data. No backend, no deploy, no AWS credentials required.
 
-### Deploy to AWS (one command)
+### Deploy to AWS
+
+> **Choose ONE of the two options below — either the one-command deploy OR the step-by-step guide. Do not run both.**
+
+#### Option A: One command
 
 ```bash
 cd trust-safety-orchestration-agent
@@ -57,7 +61,7 @@ make quickstart
 
 This installs deps, builds, deploys a lightweight stack (no VPC/Redis), seeds demo data, and starts the frontend locally connected to your live backend.
 
-### Deploy to AWS (step by step)
+#### Option B: Step by step
 
 If `make quickstart` fails or you prefer to run each step manually, follow these in order from the project root:
 
