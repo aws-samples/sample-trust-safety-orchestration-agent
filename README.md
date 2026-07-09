@@ -62,6 +62,9 @@ make quickstart
 
 This installs deps, builds, deploys a lightweight stack (no VPC/Redis), seeds demo data, and starts the frontend locally connected to your live backend.
 
+> [!TIP]
+> To deploy the frontend to CloudFront (instead of running locally), follow [Step 5: Deploy the frontend to S3 + CloudFront](#step-5-deploy-the-frontend-to-s3--cloudfront) below.
+
 #### Option B: Step by step
 
 If `make quickstart` fails or you prefer to run each step manually, follow these in order from the project root:
