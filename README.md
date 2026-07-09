@@ -91,10 +91,10 @@ This deploys the full production stack:
 
 Seed initial configuration:
 
-> **⚠️ Run this from the project root directory, not from `frontend/`.**
+> **⚠️ Run this from the project root directory, not from `frontend/`. Use the same `--env` value you deployed with.**
 
 ```bash
-python scripts/seed_demo_data.py --env prod --region us-east-1
+uv run python scripts/seed_demo_data.py --env prod --region us-east-1
 ```
 
 Build and deploy the frontend to S3 + CloudFront:
