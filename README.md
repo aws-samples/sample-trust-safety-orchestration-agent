@@ -50,7 +50,8 @@ Open http://localhost:5173 — the dashboard runs in **demo mode** with mock dat
 
 ### Deploy to AWS
 
-> **Choose ONE of the two options below — either the one-command deploy OR the step-by-step guide. Do not run both.**
+> [!IMPORTANT]
+> Choose **ONE** of the two options below — either the one-command deploy OR the step-by-step guide. Do not run both.
 
 #### Option A: One command
 
