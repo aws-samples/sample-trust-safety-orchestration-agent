@@ -11,6 +11,7 @@ import { CasesListPage } from '@/modules/case/CasesListPage'
 import { CaseDetailPage } from '@/modules/case/CaseDetailPage'
 import { AdminConfigPage } from '@/modules/admin/AdminConfigPage'
 import { WellbeingPage } from '@/modules/wellbeing/WellbeingPage'
+import { GettingStartedPage } from '@/modules/getting-started/GettingStartedPage'
 import type { ReactNode } from 'react'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -35,6 +36,7 @@ function AuthenticatedApp() {
         <Route path="cases/:caseId" element={<CaseDetailPage />} />
         <Route path="admin" element={<AdminConfigPage />} />
         <Route path="wellbeing" element={<WellbeingPage />} />
+        <Route path="getting-started" element={<GettingStartedPage />} />
       </Route>
     </Routes>
   )
