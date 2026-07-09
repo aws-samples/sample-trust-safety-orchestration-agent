@@ -1,6 +1,5 @@
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from handlers.anomaly_handler import lambda_handler
 

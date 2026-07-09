@@ -32,7 +32,7 @@ def lambda_handler(event, context):
         })
     except json.JSONDecodeError:
         return _response(400, {"error": "Invalid JSON body"})
-    except Exception as e:
+    except Exception:
         logger.exception("Anomaly handler error")
         return _response(500, {"error": "Internal server error"})
 

@@ -1,12 +1,11 @@
 import json
 import logging
 
-from repositories import review_queue_repository, case_repository, evidence_repository
+from repositories import review_queue_repository, case_repository
 from services import (
     enforcement_engine_service,
     escalation_service,
     feedback_loop_service,
-    content_sanitization_service,
     reviewer_wellbeing_service,
     audit_service,
 )
@@ -32,7 +31,7 @@ def lambda_handler(event, context):
         return _response(400, {"error": "Invalid JSON body"})
     except ValueError as e:
         return _response(400, {"error": str(e)})
-    except Exception as e:
+    except Exception:
         logger.exception("Review handler error")
         return _response(500, {"error": "Internal server error"})
 

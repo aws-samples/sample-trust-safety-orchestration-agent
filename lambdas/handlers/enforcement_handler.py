@@ -18,7 +18,7 @@ def lambda_handler(event, context):
         return _response(400, {"error": "Invalid JSON body"})
     except ValueError as e:
         return _response(400, {"error": str(e)})
-    except Exception as e:
+    except Exception:
         logger.exception("Enforcement handler error")
         return _response(500, {"error": "Internal server error"})
 

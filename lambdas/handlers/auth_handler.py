@@ -51,7 +51,7 @@ def lambda_handler(event, context):
         return _response(401, {"error": "Invalid email or password"})
     except cognito.exceptions.UserNotFoundException:
         return _response(401, {"error": "Invalid email or password"})
-    except Exception as e:
+    except Exception:
         logger.exception("Auth handler error")
         return _response(500, {"error": "Internal server error"})
 

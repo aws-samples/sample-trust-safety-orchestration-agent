@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 
 from repositories import audit_repository
 
@@ -122,10 +121,10 @@ def generate_compliance_report(start_date: str, end_date: str) -> dict:
     )
 
     total = len(enforcement_logs)
-    autonomous = sum(1 for l in enforcement_logs if l.get("decision_source") == "autonomous")
+    autonomous = sum(1 for log in enforcement_logs if log.get("decision_source") == "autonomous")
     human = total - autonomous
 
-    response_times = [l.get("response_time_ms", 0) for l in enforcement_logs if l.get("response_time_ms")]
+    response_times = [log.get("response_time_ms", 0) for log in enforcement_logs if log.get("response_time_ms")]
     response_times.sort()
 
     def percentile(data, p):

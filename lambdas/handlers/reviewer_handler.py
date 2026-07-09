@@ -20,7 +20,7 @@ def lambda_handler(event, context):
 
     except ValueError as e:
         return _response(400, {"error": str(e)})
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error")
         return _response(500, {"error": "Internal server error"})
 

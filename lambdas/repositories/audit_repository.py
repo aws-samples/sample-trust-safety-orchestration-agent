@@ -3,7 +3,6 @@ import io
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
 import ulid
 from boto3.dynamodb.conditions import Key

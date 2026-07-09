@@ -4,9 +4,8 @@ These tests exercise the service layer in sequence (detection -> investigation -
 decision -> enforcement) with all repository/external calls mocked out.
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 from services import (
     confidence_calculator_service,

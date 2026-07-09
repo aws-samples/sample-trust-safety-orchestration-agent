@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
-from repositories import metrics_repository, case_repository, review_queue_repository, appeal_repository
+from repositories import metrics_repository, case_repository, review_queue_repository
 
 logger = logging.getLogger(__name__)
 

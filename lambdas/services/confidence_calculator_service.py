@@ -1,5 +1,4 @@
 import logging
-from decimal import Decimal
 
 from repositories import config_repository
 
@@ -35,7 +34,7 @@ def _get_weights() -> dict:
 
 def calculate_confidence_scores(evidence_package: dict) -> dict:
     scores = {}
-    weights = _get_weights()
+    _get_weights()  # validates config exists
 
     msg = evidence_package.get("message_analysis", {})
     img = evidence_package.get("image_analysis", {})

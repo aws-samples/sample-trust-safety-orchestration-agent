@@ -1,7 +1,7 @@
 import json
 import logging
 
-from services import metrics_aggregation_service, audit_service
+from services import metrics_aggregation_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def lambda_handler(event, context):
 
     except ValueError as e:
         return _response(400, {"error": str(e)})
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error")
         return _response(500, {"error": "Internal server error"})
 
@@ -35,28 +35,28 @@ def _handle_prometheus_metrics():
     metrics = metrics_aggregation_service.get_realtime_metrics()
 
     lines = []
-    lines.append(f'# HELP platform_safety_score Platform safety score (0-100)')
-    lines.append(f'# TYPE platform_safety_score gauge')
+    lines.append('# HELP platform_safety_score Platform safety score (0-100)')
+    lines.append('# TYPE platform_safety_score gauge')
     lines.append(f'platform_safety_score {metrics["platform_safety_score"]}')
 
-    lines.append(f'# HELP cases_processed_today Total cases processed today')
-    lines.append(f'# TYPE cases_processed_today counter')
+    lines.append('# HELP cases_processed_today Total cases processed today')
+    lines.append('# TYPE cases_processed_today counter')
     lines.append(f'cases_processed_today {metrics["cases_processed_today"]}')
 
-    lines.append(f'# HELP autonomous_resolution_rate Autonomous resolution rate')
-    lines.append(f'# TYPE autonomous_resolution_rate gauge')
+    lines.append('# HELP autonomous_resolution_rate Autonomous resolution rate')
+    lines.append('# TYPE autonomous_resolution_rate gauge')
     lines.append(f'autonomous_resolution_rate {metrics["autonomous_resolution_rate"]}')
 
-    lines.append(f'# HELP avg_resolution_time_minutes Average resolution time in minutes')
-    lines.append(f'# TYPE avg_resolution_time_minutes gauge')
+    lines.append('# HELP avg_resolution_time_minutes Average resolution time in minutes')
+    lines.append('# TYPE avg_resolution_time_minutes gauge')
     lines.append(f'avg_resolution_time_minutes {metrics["avg_resolution_time_minutes"]}')
 
-    lines.append(f'# HELP review_queue_depth Current review queue depth')
-    lines.append(f'# TYPE review_queue_depth gauge')
+    lines.append('# HELP review_queue_depth Current review queue depth')
+    lines.append('# TYPE review_queue_depth gauge')
     lines.append(f'review_queue_depth {metrics["review_queue_depth"]}')
 
-    lines.append(f'# HELP elevated_threat_level Whether threat level is elevated')
-    lines.append(f'# TYPE elevated_threat_level gauge')
+    lines.append('# HELP elevated_threat_level Whether threat level is elevated')
+    lines.append('# TYPE elevated_threat_level gauge')
     lines.append(f'elevated_threat_level {1 if metrics["elevated_threat_level"] else 0}')
 
     for vtype, count in metrics.get("threat_distribution", {}).items():

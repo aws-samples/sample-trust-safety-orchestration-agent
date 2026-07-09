@@ -47,10 +47,10 @@ def lambda_handler(event, context):
 
     except ValueError as e:
         return _response(400, {"error": str(e)})
-    except KeyError as e:
+    except KeyError:
         logger.exception("Missing required field in event")
         return _response(401, {"error": "Unauthorized: missing user identity"})
-    except Exception as e:
+    except Exception:
         logger.exception("Handler error")
         return _response(500, {"error": "Internal server error"})
 

@@ -5,7 +5,6 @@ from repositories import (
     review_queue_repository,
     case_repository,
     audit_repository,
-    config_repository,
 )
 from services import precedent_matcher_service
 

@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 def lambda_handler(event, context):
     try:
         path = event.get("resource", event.get("path", ""))
-        method = event.get("httpMethod", "GET")
 
         if "evidence" in path:
             return _get_case_evidence(event)
@@ -18,7 +17,7 @@ def lambda_handler(event, context):
             return _get_active_cases(event)
         else:
             return _response(404, {"error": "Not found"})
-    except Exception as e:
+    except Exception:
         logger.exception("Case handler error")
         return _response(500, {"error": "Internal server error"})
 

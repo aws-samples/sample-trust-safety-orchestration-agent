@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from repositories import case_repository, evidence_repository, blocklist_repository
+from repositories import evidence_repository, blocklist_repository
 from services import content_analysis_service, image_analysis_service
 
 logger = logging.getLogger(__name__)

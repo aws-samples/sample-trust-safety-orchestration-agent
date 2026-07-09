@@ -29,7 +29,7 @@ def lambda_handler(event, context):
                 return _handle_broadcast()
             return {"statusCode": 200}
 
-    except Exception as e:
+    except Exception:
         logger.exception("WebSocket handler error")
         return {"statusCode": 200}
 

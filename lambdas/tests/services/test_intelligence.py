@@ -1,6 +1,6 @@
 import hashlib
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from services import intelligence_service as svc
 
